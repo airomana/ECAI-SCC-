@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 排除敏感数据 -->
+    <exclude domain="sharedpref" path="sensitive_prefs.xml"/>
+    <exclude domain="database" path="health_profiles"/>
+    <!-- 包含用户设置 -->
+    <include domain="sharedpref" path="app_settings.xml"/>
+</full-backup-content>
