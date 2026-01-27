@@ -15,11 +15,27 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import kotlin.math.max
+import kotlin.math.min
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -111,11 +127,19 @@ fun MenuScanScreen(
         }
 
         capturedBitmap = bitmap
+        showCropDialog = true  // 显示裁剪界面
+        errorMessage = null
+        recognizedText = null
+        scanResults = emptyList()
+    }
+    
+    // 处理图片（OCR识别和菜品分析）
+    fun processImage(bitmap: Bitmap) {
         isScanning = true
         errorMessage = null
         recognizedText = null
         scanResults = emptyList()
-
+        
         scope.launch {
             try {
                 // 图片质量检查
@@ -163,7 +187,7 @@ fun MenuScanScreen(
                 // 查询菜品知识库并生成智能建议
                 val results = mutableListOf<DishResult>()
                 var llmCallCount = 0  // 限制LLM调用次数
-                val maxLlmCalls = 3   // 最多调用3次LLM
+                val maxLlmCalls = 10  // 最多调用10次LLM（覆盖所有处理的菜品）
                 
                 for (candidate in limitedCandidates) {
                     try {
@@ -221,6 +245,9 @@ fun MenuScanScreen(
                             healthProfile = healthProfile,
                             riskResult = riskResult
                         )
+                        
+                        // 调试日志：确保风险等级和建议匹配
+                        android.util.Log.d("MenuScan", "菜品: ${candidate.name}, 风险等级: ${riskResult.riskLevel}, 建议: $personalizedAdvice")
                         
                         results.add(DishResult(
                             name = candidate.name,
@@ -364,6 +391,25 @@ fun MenuScanScreen(
         
         Spacer(modifier = Modifier.height(32.dp))
         
+        // 裁剪对话框
+        if (showCropDialog && capturedBitmap != null) {
+            CropImageDialog(
+                bitmap = capturedBitmap!!,
+                onCropConfirm = { croppedBitmap ->
+                    showCropDialog = false
+                    capturedBitmap = croppedBitmap
+                    // 开始处理裁剪后的图片
+                    processImage(croppedBitmap)
+                },
+                onCropCancel = {
+                    showCropDialog = false
+                    capturedBitmap = null
+                    photoFile?.delete()
+                    photoFile = null
+                }
+            )
+        }
+        
         val hasAnyResult = (recognizedText != null) || (errorMessage != null)
         if (!hasAnyResult) {
             // 拍照界面
@@ -396,6 +442,7 @@ fun MenuScanScreen(
                 errorMessage = errorMessage,
                 imageQuality = imageQuality,
                 debugInfo = debugInfo,
+                isScanning = isScanning,
                 onRescan = {
                     scanResults = emptyList()
                     recognizedText = null
@@ -520,6 +567,7 @@ fun ResultsSection(
     errorMessage: String?,
     imageQuality: ImageQuality?,
     debugInfo: String?,
+    isScanning: Boolean,
     onRescan: () -> Unit
 ) {
     // 使用LazyColumn实现可滚动
@@ -622,31 +670,38 @@ fun ResultsSection(
             }
         }
 
-        // 识别文字
-        if (!recognizedText.isNullOrBlank()) {
+        // 结果列表或空状态
+        if (isScanning) {
+            // 正在处理中，显示加载状态
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "识别文字",
-                            style = MaterialTheme.typography.titleLarge
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = recognizedText,
-                            style = MaterialTheme.typography.bodyLarge
+                            text = "正在分析菜单，请稍候...",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-        }
-        
-        // 结果列表或空状态
-        if (results.isEmpty()) {
+        } else if (results.isEmpty()) {
+            // 处理完成但没有结果，显示空状态
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -710,9 +765,9 @@ fun DishResultCard(result: DishResult) {
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when (result.riskLevel) {
-                RiskLevel.HIGH -> MaterialTheme.colorScheme.errorContainer
-                RiskLevel.MEDIUM -> MaterialTheme.colorScheme.secondaryContainer
-                RiskLevel.LOW -> MaterialTheme.colorScheme.primaryContainer
+                RiskLevel.HIGH -> MaterialTheme.colorScheme.errorContainer  // 红色
+                RiskLevel.MEDIUM -> MaterialTheme.colorScheme.secondaryContainer  // 黄色
+                RiskLevel.LOW -> Color(0xFFE8F5E9)  // 明确的浅绿色
             }
         ),
         shape = RoundedCornerShape(16.dp),
@@ -907,57 +962,92 @@ enum class RiskLevel {
 
 /**
  * 生成简单的本地描述（不调用网络API）
- * 根据菜名中的关键词生成描述
+ * 根据菜名中的关键词生成更详细的描述
  */
 private fun generateSimpleDescription(dishName: String): String {
-    // 根据菜名中的关键词生成简单描述
-    return when {
-        // 烹饪方式
-        dishName.contains("红烧") -> "红烧的菜，味道浓郁"
-        dishName.contains("清蒸") -> "清蒸的菜，清淡健康"
-        dishName.contains("水煮") -> "水煮的菜，可能比较辣"
-        dishName.contains("干煸") -> "干煸的菜，比较香"
-        dishName.contains("糖醋") -> "糖醋口味，酸甜可口"
-        dishName.contains("鱼香") -> "鱼香口味，下饭"
-        dishName.contains("宫保") -> "宫保风味，微辣"
-        dishName.contains("麻婆") -> "麻婆豆腐类，麻辣味"
-        dishName.contains("炒") -> "炒菜"
-        dishName.contains("蒸") -> "蒸的菜，清淡"
-        dishName.contains("煮") -> "煮的菜"
-        dishName.contains("炸") -> "油炸的菜，油比较大"
-        dishName.contains("烤") -> "烤制的菜"
-        dishName.contains("炖") -> "炖的菜，比较烂"
-        dishName.contains("烧") -> "烧的菜"
-        dishName.contains("煎") -> "煎的菜"
-        dishName.contains("焖") -> "焖的菜，很入味"
-        
-        // 主食类
+    // 组合多个关键词生成更详细的描述
+    val cookingMethod = when {
+        dishName.contains("红烧") -> "红烧的"
+        dishName.contains("清蒸") -> "清蒸的"
+        dishName.contains("水煮") -> "水煮的，可能比较辣"
+        dishName.contains("干煸") -> "干煸的，比较香"
+        dishName.contains("糖醋") -> "糖醋口味的，酸甜"
+        dishName.contains("鱼香") -> "鱼香口味的，下饭"
+        dishName.contains("宫保") -> "宫保风味的，微辣"
+        dishName.contains("麻婆") -> "麻婆风味的，麻辣"
+        dishName.contains("炒") -> "炒的"
+        dishName.contains("蒸") -> "清蒸的，清淡"
+        dishName.contains("煮") -> "煮的"
+        dishName.contains("炸") -> "油炸的，油比较大"
+        dishName.contains("烤") -> "烤制的"
+        dishName.contains("炖") -> "炖的，比较烂"
+        dishName.contains("烧") -> "烧的"
+        dishName.contains("煎") -> "煎的"
+        dishName.contains("焖") -> "焖的，很入味"
+        dishName.contains("凉拌") -> "凉拌的，清爽"
+        else -> null
+    }
+    
+    val mainIngredient = when {
+        dishName.contains("肉") && !dishName.contains("鸡肉") && !dishName.contains("鸭肉") -> "肉类"
+        dishName.contains("鸡肉") || dishName.contains("鸡") -> "鸡肉"
+        dishName.contains("鸭肉") || dishName.contains("鸭") -> "鸭肉"
+        dishName.contains("鱼") -> "鱼"
+        dishName.contains("虾") -> "虾"
+        dishName.contains("蛋") -> "蛋"
+        dishName.contains("豆腐") -> "豆腐，蛋白质丰富"
+        dishName.contains("青菜") || dishName.contains("白菜") -> "蔬菜"
+        dishName.contains("茄子") || dishName.contains("茄") -> "茄子"
+        dishName.contains("土豆") -> "土豆"
+        dishName.contains("黄瓜") -> "黄瓜"
+        dishName.contains("西红柿") || dishName.contains("番茄") -> "西红柿"
+        dishName.contains("玉米") -> "玉米"
+        dishName.contains("韭菜") -> "韭菜"
+        dishName.contains("酸菜") -> "酸菜"
+        dishName.contains("粉丝") -> "粉丝"
+        else -> null
+    }
+    
+    val dishType = when {
         dishName.contains("饭") -> "主食，米饭类"
         dishName.contains("面") -> "主食，面食类"
         dishName.contains("粥") -> "粥，易消化"
-        dishName.contains("饺") -> "饺子类"
-        dishName.contains("包") -> "包子类"
-        dishName.contains("饼") -> "饼类"
-        
-        // 汤类
+        dishName.contains("饺") -> "饺子"
+        dishName.contains("包") -> "包子"
+        dishName.contains("饼") -> "饼"
         dishName.contains("汤") -> "汤品，暖胃"
-        dishName.contains("羹") -> "羹汤类"
+        dishName.contains("羹") -> "羹汤"
         dishName.contains("锅") -> "锅类菜品"
-        
-        // 食材类
-        dishName.contains("肉") -> "肉类菜品"
-        dishName.contains("鸡") -> "鸡肉类菜品"
-        dishName.contains("鸭") -> "鸭肉类菜品"
-        dishName.contains("鱼") -> "鱼类菜品"
-        dishName.contains("虾") -> "虾类菜品"
-        dishName.contains("蛋") -> "蛋类菜品"
-        dishName.contains("豆腐") -> "豆腐类菜品，蛋白质丰富"
-        dishName.contains("青菜") || dishName.contains("白菜") -> "蔬菜类，健康"
-        dishName.contains("茄") -> "茄子类菜品"
-        dishName.contains("土豆") -> "土豆类菜品"
-        
-        // 默认
-        else -> "菜单上的菜品"
+        else -> null
+    }
+    
+    // 组合描述
+    return buildString {
+        when {
+            dishType != null -> {
+                append(dishType)
+            }
+            cookingMethod != null && mainIngredient != null -> {
+                append("${mainIngredient}${cookingMethod}")
+                if (cookingMethod.contains("油")) {
+                    append("，油比较大")
+                } else if (cookingMethod.contains("清淡") || cookingMethod.contains("清蒸")) {
+                    append("，比较健康")
+                }
+            }
+            mainIngredient != null -> {
+                append("${mainIngredient}类菜品")
+            }
+            cookingMethod != null -> {
+                append(cookingMethod)
+                if (cookingMethod.contains("油")) {
+                    append("，油比较大")
+                }
+            }
+            else -> {
+                append("菜单上的菜品")
+            }
+        }
     }
 }
 
@@ -1017,12 +1107,370 @@ private fun generatePersonalizedAdvice(
                 "⚠️ ${userName}，这个${dishName}${reason}，建议少吃或不吃"
             }
             RiskLevel.MEDIUM -> {
-                "${userName}，这个${dishName}可以适量食用，但需注意控制分量"
+                val reason = riskResult.reasons.firstOrNull()
+                if (reason != null) {
+                    "${userName}，这个${dishName}${reason}，可以适量食用，但需注意控制分量"
+                } else {
+                    "${userName}，这个${dishName}可以适量食用，但需注意控制分量"
+                }
             }
             RiskLevel.LOW -> {
                 "✅ ${userName}，这个${dishName}比较适合您，可以放心食用"
             }
         }
+    }
+}
+
+/**
+ * 图片裁剪对话框
+ * 允许用户拖拽选择要识别的区域
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CropImageDialog(
+    bitmap: Bitmap,
+    onCropConfirm: (Bitmap) -> Unit,
+    onCropCancel: () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    
+    // 图片显示尺寸（相对于Box，因为Image使用FillMaxSize，所以就是Box的尺寸）
+    var imageSize by remember { mutableStateOf(Size.Zero) }
+    
+    // 裁剪框位置（相对于图片显示区域的比例，0-1）
+    var cropRect by remember { 
+        mutableStateOf(
+            // 默认选择中间80%的区域
+            Rect(0.1f, 0.1f, 0.9f, 0.9f)
+        )
+    }
+    
+    // 拖拽状态
+    var dragState by remember { mutableStateOf<DragState?>(null) }
+    
+    Dialog(onDismissRequest = onCropCancel) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.9f),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // 标题栏
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "选择识别区域",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    IconButton(onClick = onCropCancel) {
+                        Icon(Icons.Default.Close, "取消")
+                    }
+                }
+                
+                // 图片显示区域（可拖拽选择）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(16.dp)
+                ) {
+                    // 显示图片
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "待裁剪图片",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onGloballyPositioned { coordinates ->
+                                imageSize = Size(
+                                    coordinates.size.width.toFloat(),
+                                    coordinates.size.height.toFloat()
+                                )
+                            },
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                    )
+                    
+                    // 裁剪框覆盖层（半透明遮罩 + 可拖拽的裁剪框）
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        // 计算点击位置相对于图片的位置（0-1）
+                                        // 因为Canvas和Image都在同一个Box中，offset就是相对于Box的坐标
+                                        if (imageSize.width > 0 && imageSize.height > 0) {
+                                            val relativeX = (offset.x / imageSize.width).coerceIn(0f, 1f)
+                                            val relativeY = (offset.y / imageSize.height).coerceIn(0f, 1f)
+                                            
+                                            val cropX = cropRect.left * imageSize.width
+                                            val cropY = cropRect.top * imageSize.height
+                                            val cropWidth = (cropRect.right - cropRect.left) * imageSize.width
+                                            val cropHeight = (cropRect.bottom - cropRect.top) * imageSize.height
+                                            
+                                            val cropLeft = cropX
+                                            val cropTop = cropY
+                                            val cropRight = cropX + cropWidth
+                                            val cropBottom = cropY + cropHeight
+                                            
+                                            val margin = with(density) { 20.dp.toPx() }
+                                            
+                                            // 判断拖拽类型
+                                            dragState = when {
+                                                // 拖拽左上角
+                                                offset.x in (cropLeft - margin)..(cropLeft + margin) &&
+                                                offset.y in (cropTop - margin)..(cropTop + margin) -> 
+                                                    DragState.ResizeTopLeft(offset)
+                                                // 拖拽右上角
+                                                offset.x in (cropRight - margin)..(cropRight + margin) &&
+                                                offset.y in (cropTop - margin)..(cropTop + margin) -> 
+                                                    DragState.ResizeTopRight(offset)
+                                                // 拖拽左下角
+                                                offset.x in (cropLeft - margin)..(cropLeft + margin) &&
+                                                offset.y in (cropBottom - margin)..(cropBottom + margin) -> 
+                                                    DragState.ResizeBottomLeft(offset)
+                                                // 拖拽右下角
+                                                offset.x in (cropRight - margin)..(cropRight + margin) &&
+                                                offset.y in (cropBottom - margin)..(cropBottom + margin) -> 
+                                                    DragState.ResizeBottomRight(offset)
+                                                // 拖拽整个框
+                                                offset.x in cropLeft..cropRight &&
+                                                offset.y in cropTop..cropBottom -> 
+                                                    DragState.Move(offset)
+                                                else -> null
+                                            }
+                                        }
+                                    },
+                                    onDrag = { change, _ ->
+                                        dragState?.let { state ->
+                                            // 计算相对位置（0-1），offset就是相对于Box的坐标
+                                            val relativeX = (change.position.x / imageSize.width).coerceIn(0f, 1f)
+                                            val relativeY = (change.position.y / imageSize.height).coerceIn(0f, 1f)
+                                            
+                                            val newRect = when (state) {
+                                                is DragState.Move -> {
+                                                    val deltaX = (change.position.x - state.startOffset.x) / imageSize.width
+                                                    val deltaY = (change.position.y - state.startOffset.y) / imageSize.height
+                                                    val cropWidth = cropRect.right - cropRect.left
+                                                    val cropHeight = cropRect.bottom - cropRect.top
+                                                    Rect(
+                                                        (cropRect.left + deltaX).coerceIn(0f, 1f - cropWidth),
+                                                        (cropRect.top + deltaY).coerceIn(0f, 1f - cropHeight),
+                                                        (cropRect.right + deltaX).coerceIn(cropWidth, 1f),
+                                                        (cropRect.bottom + deltaY).coerceIn(cropHeight, 1f)
+                                                    )
+                                                }
+                                                is DragState.ResizeTopLeft -> {
+                                                    val minSize = 0.1f
+                                                    Rect(
+                                                        relativeX.coerceIn(0f, cropRect.right - minSize),
+                                                        relativeY.coerceIn(0f, cropRect.bottom - minSize),
+                                                        cropRect.right,
+                                                        cropRect.bottom
+                                                    )
+                                                }
+                                                is DragState.ResizeTopRight -> {
+                                                    val minSize = 0.1f
+                                                    Rect(
+                                                        cropRect.left,
+                                                        relativeY.coerceIn(0f, cropRect.bottom - minSize),
+                                                        relativeX.coerceIn(cropRect.left + minSize, 1f),
+                                                        cropRect.bottom
+                                                    )
+                                                }
+                                                is DragState.ResizeBottomLeft -> {
+                                                    val minSize = 0.1f
+                                                    Rect(
+                                                        relativeX.coerceIn(0f, cropRect.right - minSize),
+                                                        cropRect.top,
+                                                        cropRect.right,
+                                                        relativeY.coerceIn(cropRect.top + minSize, 1f)
+                                                    )
+                                                }
+                                                is DragState.ResizeBottomRight -> {
+                                                    val minSize = 0.1f
+                                                    Rect(
+                                                        cropRect.left,
+                                                        cropRect.top,
+                                                        relativeX.coerceIn(cropRect.left + minSize, 1f),
+                                                        relativeY.coerceIn(cropRect.top + minSize, 1f)
+                                                    )
+                                                }
+                                            }
+                                            cropRect = newRect
+                                            dragState = state.copy(offset = change.position)
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        dragState = null
+                                    }
+                                )
+                            }
+                    ) {
+                        // 绘制半透明遮罩
+                        val cropX = cropRect.left * imageSize.width
+                        val cropY = cropRect.top * imageSize.height
+                        val cropWidth = (cropRect.right - cropRect.left) * imageSize.width
+                        val cropHeight = (cropRect.bottom - cropRect.top) * imageSize.height
+                        
+                        // 创建裁剪路径（排除裁剪框区域）
+                        val cropPath = Path().apply {
+                            // 外部矩形
+                            addRect(androidx.compose.ui.geometry.Rect(Offset.Zero, imageSize))
+                            // 减去裁剪框
+                            addRect(androidx.compose.ui.geometry.Rect(
+                                Offset(cropX, cropY),
+                                Size(cropWidth, cropHeight)
+                            ))
+                            fillType = PathFillType.EvenOdd
+                        }
+                        
+                        // 绘制半透明遮罩
+                        clipPath(cropPath) {
+                            drawRect(
+                                color = Color.Black.copy(alpha = 0.6f),
+                                size = imageSize
+                            )
+                        }
+                        
+                        // 绘制裁剪框边框
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(cropX, cropY),
+                            size = Size(cropWidth, cropHeight),
+                            style = Stroke(width = with(density) { 3.dp.toPx() })
+                        )
+                        
+                        // 绘制四个角的控制点
+                        val cornerSize = with(density) { 20.dp.toPx() }
+                        val cornerOffset = cornerSize / 2
+                        
+                        val strokeWidth = with(density) { 3.dp.toPx() }
+                        // 左上角
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(cropX - cornerOffset, cropY - cornerOffset),
+                            size = Size(cornerSize, cornerSize),
+                            style = Stroke(width = strokeWidth)
+                        )
+                        // 右上角
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(cropX + cropWidth - cornerOffset, cropY - cornerOffset),
+                            size = Size(cornerSize, cornerSize),
+                            style = Stroke(width = strokeWidth)
+                        )
+                        // 左下角
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(cropX - cornerOffset, cropY + cropHeight - cornerOffset),
+                            size = Size(cornerSize, cornerSize),
+                            style = Stroke(width = strokeWidth)
+                        )
+                        // 右下角
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(cropX + cropWidth - cornerOffset, cropY + cropHeight - cornerOffset),
+                            size = Size(cornerSize, cornerSize),
+                            style = Stroke(width = strokeWidth)
+                        )
+                    }
+                }
+                
+                // 提示文字
+                Text(
+                    text = "拖拽边框调整区域，拖拽中心移动位置",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                // 底部按钮
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onCropCancel,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("取消")
+                    }
+                    Button(
+                        onClick = {
+                            // 根据裁剪框比例裁剪图片
+                            val croppedBitmap = com.eldercare.ai.utils.ImageProcessor.cropBitmap(
+                                bitmap = bitmap,
+                                left = cropRect.left,
+                                top = cropRect.top,
+                                right = cropRect.right,
+                                bottom = cropRect.bottom
+                            )
+                            onCropConfirm(croppedBitmap)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("确认裁剪")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 拖拽状态
+ */
+private sealed class DragState {
+    abstract val startOffset: Offset
+    abstract var currentOffset: Offset
+    abstract fun copy(offset: Offset): DragState
+    
+    data class Move(
+        override val startOffset: Offset,
+        override var currentOffset: Offset = startOffset
+    ) : DragState() {
+        override fun copy(offset: Offset) = Move(startOffset, offset)
+    }
+    
+    data class ResizeTopLeft(
+        override val startOffset: Offset,
+        override var currentOffset: Offset = startOffset
+    ) : DragState() {
+        override fun copy(offset: Offset) = ResizeTopLeft(startOffset, offset)
+    }
+    
+    data class ResizeTopRight(
+        override val startOffset: Offset,
+        override var currentOffset: Offset = startOffset
+    ) : DragState() {
+        override fun copy(offset: Offset) = ResizeTopRight(startOffset, offset)
+    }
+    
+    data class ResizeBottomLeft(
+        override val startOffset: Offset,
+        override var currentOffset: Offset = startOffset
+    ) : DragState() {
+        override fun copy(offset: Offset) = ResizeBottomLeft(startOffset, offset)
+    }
+    
+    data class ResizeBottomRight(
+        override val startOffset: Offset,
+        override var currentOffset: Offset = startOffset
+    ) : DragState() {
+        override fun copy(offset: Offset) = ResizeBottomRight(startOffset, offset)
     }
 }
 
