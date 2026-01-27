@@ -138,6 +138,97 @@ abstract class ElderCareDatabase : RoomDatabase() {
                         suitableFor = listOf("健康人群", "高血压", "糖尿病", "减肥人群"),
                         notSuitableFor = emptyList(),
                         plainDescription = "青菜简单炒一下，清淡又健康"
+                    ),
+                    // 添加更多常见菜品
+                    Dish(
+                        name = "宫保鸡丁",
+                        ingredients = listOf("鸡胸肉", "花生", "干辣椒", "花椒"),
+                        cookingMethod = "爆炒",
+                        tags = listOf("高蛋白", "中油"),
+                        nutrients = "蛋白质丰富，含花生",
+                        suitableFor = listOf("健康人群"),
+                        notSuitableFor = listOf("花生过敏", "痛风"),
+                        plainDescription = "鸡肉和花生一起炒的，香辣下饭，但花生过敏的人不能吃"
+                    ),
+                    Dish(
+                        name = "麻婆豆腐",
+                        ingredients = listOf("豆腐", "肉末", "豆瓣酱", "花椒"),
+                        cookingMethod = "烧",
+                        tags = listOf("高蛋白", "含盐", "含辣"),
+                        nutrients = "豆腐蛋白质丰富，但较咸较辣",
+                        suitableFor = listOf("健康人群"),
+                        notSuitableFor = listOf("高血压", "胃病"),
+                        plainDescription = "豆腐和肉末一起烧的，又麻又辣，血压高的要少吃"
+                    ),
+                    Dish(
+                        name = "白切鸡",
+                        ingredients = listOf("整鸡", "姜", "葱"),
+                        cookingMethod = "白煮",
+                        tags = listOf("低脂", "高蛋白"),
+                        nutrients = "热量适中，蛋白质丰富",
+                        suitableFor = listOf("健康人群", "高血压", "糖尿病"),
+                        notSuitableFor = emptyList(),
+                        plainDescription = "整只鸡白水煮的，清淡健康，适合大部分人"
+                    ),
+                    Dish(
+                        name = "鱼香肉丝",
+                        ingredients = listOf("猪肉丝", "木耳", "胡萝卜", "豆瓣酱"),
+                        cookingMethod = "炒",
+                        tags = listOf("中油", "含盐"),
+                        nutrients = "营养均衡，但油和盐较多",
+                        suitableFor = listOf("健康人群"),
+                        notSuitableFor = listOf("高血压"),
+                        plainDescription = "肉丝和蔬菜一起炒的，味道不错，但有点咸"
+                    ),
+                    Dish(
+                        name = "西红柿鸡蛋",
+                        ingredients = listOf("鸡蛋", "西红柿", "糖", "盐"),
+                        cookingMethod = "炒",
+                        tags = listOf("高蛋白", "含糖"),
+                        nutrients = "蛋白质和维生素丰富，但可能加糖",
+                        suitableFor = listOf("健康人群", "高血压"),
+                        notSuitableFor = listOf("糖尿病", "鸡蛋过敏"),
+                        plainDescription = "鸡蛋和西红柿一起炒的，营养好，但糖尿病患者要注意糖分"
+                    ),
+                    Dish(
+                        name = "水煮鱼",
+                        ingredients = listOf("鱼片", "豆芽", "干辣椒", "花椒"),
+                        cookingMethod = "水煮",
+                        tags = listOf("高蛋白", "含辣", "中油"),
+                        nutrients = "蛋白质丰富，但较辣较油",
+                        suitableFor = listOf("健康人群"),
+                        notSuitableFor = listOf("胃病", "海鲜过敏"),
+                        plainDescription = "鱼片用水煮的，很辣，胃不好的人要少吃"
+                    ),
+                    Dish(
+                        name = "蒸蛋",
+                        ingredients = listOf("鸡蛋", "水", "盐"),
+                        cookingMethod = "蒸",
+                        tags = listOf("高蛋白", "低脂"),
+                        nutrients = "蛋白质丰富，热量低",
+                        suitableFor = listOf("健康人群", "高血压", "糖尿病", "减肥人群"),
+                        notSuitableFor = listOf("鸡蛋过敏"),
+                        plainDescription = "鸡蛋蒸的，很嫩很清淡，适合大部分人"
+                    ),
+                    Dish(
+                        name = "回锅肉",
+                        ingredients = listOf("五花肉", "青椒", "豆瓣酱"),
+                        cookingMethod = "炒",
+                        tags = listOf("高油", "高盐"),
+                        nutrients = "热量高，脂肪多",
+                        suitableFor = listOf("健康人群"),
+                        notSuitableFor = listOf("高血压", "高血脂", "减肥人群"),
+                        plainDescription = "五花肉先煮后炒，很香但油大，血压高的要少吃"
+                    ),
+                    Dish(
+                        name = "凉拌黄瓜",
+                        ingredients = listOf("黄瓜", "蒜", "醋", "盐"),
+                        cookingMethod = "凉拌",
+                        tags = listOf("低脂", "低热量"),
+                        nutrients = "热量极低，水分多",
+                        suitableFor = listOf("健康人群", "高血压", "糖尿病", "减肥人群"),
+                        notSuitableFor = emptyList(),
+                        plainDescription = "黄瓜凉拌的，清爽解腻，很适合夏天吃"
                     )
                 )
             )

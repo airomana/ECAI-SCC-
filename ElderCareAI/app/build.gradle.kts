@@ -146,6 +146,16 @@ dependencies {
     
     // Gson for JSON serialization
     implementation(libs.gson)
+
+    // ML Kit OCR（端侧文字识别）
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.text.recognition.chinese)
+    
+    // Retrofit & OkHttp (for LLM API)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.gson)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
     
     // Testing
     testImplementation(libs.junit)

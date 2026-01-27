@@ -12,9 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.ElderCareDatabase
+import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.HealthProfile
+import com.eldercare.ai.tts.TtsService
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import kotlinx.coroutines.launch
 
@@ -23,10 +26,18 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onNavigateBack: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var showHealthProfileDialog by remember { mutableStateOf(false) }
     var showEmergencyContactDialog by remember { mutableStateOf(false) }
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
+    val settingsManager = remember { SettingsManager(context) }
+    val ttsService = remember { TtsService.getInstance(context) }
+    
+    // 读取TTS设置
+    var voiceEnabled by remember { mutableStateOf(settingsManager.ttsEnabled) }
+    var vibrationEnabled by remember { mutableStateOf(settingsManager.vibrationEnabled) }
+    var fontSize by remember { mutableStateOf(settingsManager.fontSize) }
     
     Column(
         modifier = Modifier
@@ -85,16 +96,16 @@ fun SettingsScreen(
             
             item {
                 SettingsSection(title = "使用设置") {
-                    var voiceEnabled by remember { mutableStateOf(true) }
-                    var vibrationEnabled by remember { mutableStateOf(true) }
-                    var fontSize by remember { mutableStateOf(2f) }
-                    
                     SettingsItemWithSwitch(
                         icon = Icons.Default.VolumeUp,
                         title = "语音播报",
                         subtitle = "开启后会语音播报识别结果",
                         checked = voiceEnabled,
-                        onCheckedChange = { voiceEnabled = it }
+                        onCheckedChange = { 
+                            voiceEnabled = it
+                            settingsManager.ttsEnabled = it
+                            ttsService.setEnabled(it)
+                        }
                     )
                     
                     SettingsItemWithSwitch(
@@ -102,7 +113,10 @@ fun SettingsScreen(
                         title = "震动提醒",
                         subtitle = "重要提醒时震动",
                         checked = vibrationEnabled,
-                        onCheckedChange = { vibrationEnabled = it }
+                        onCheckedChange = { 
+                            vibrationEnabled = it
+                            settingsManager.vibrationEnabled = it
+                        }
                     )
                     
                     SettingsItemWithSlider(
@@ -110,7 +124,10 @@ fun SettingsScreen(
                         title = "字体大小",
                         subtitle = "调整文字显示大小",
                         value = fontSize,
-                        onValueChange = { fontSize = it },
+                        onValueChange = { 
+                            fontSize = it
+                            settingsManager.fontSize = it
+                        },
                         valueRange = 1f..3f
                     )
                 }

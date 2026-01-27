@@ -15,6 +15,10 @@ interface DishDao {
 
     @Query("SELECT * FROM dish ORDER BY name ASC")
     fun getAll(): Flow<List<Dish>>
+    
+    /** 获取所有菜品（同步版本，用于智能匹配） */
+    @Query("SELECT * FROM dish ORDER BY name ASC")
+    suspend fun getAllOnce(): List<Dish>
 
     /** 按菜名精确查询（用于 OCR 识别后的知识库匹配） */
     @Query("SELECT * FROM dish WHERE name = :name LIMIT 1")
