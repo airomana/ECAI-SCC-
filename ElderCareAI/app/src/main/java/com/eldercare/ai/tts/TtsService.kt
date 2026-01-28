@@ -20,16 +20,26 @@ class TtsService private constructor(context: Context) {
     private var isSpeaking = false
     
     init {
+        android.util.Log.d("TtsService", "初始化TTS服务")
         tts = TextToSpeech(context) { status ->
+            android.util.Log.d("TtsService", "TTS初始化回调，status=$status")
             if (status == TextToSpeech.SUCCESS) {
                 val result = tts?.setLanguage(Locale.CHINESE)
+                android.util.Log.d("TtsService", "设置中文语言，result=$result")
                 if (result == TextToSpeech.LANG_MISSING_DATA || 
                     result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     // 如果中文不支持，尝试英文
+                    android.util.Log.w("TtsService", "中文不支持，尝试英文")
                     tts?.setLanguage(Locale.ENGLISH)
                 }
                 isInitialized = true
-                processQueue()
+                android.util.Log.d("TtsService", "TTS初始化完成，开始处理队列，队列大小: ${pendingQueue.size}")
+                // 确保在初始化完成后立即处理队列
+                if (pendingQueue.isNotEmpty()) {
+                    processQueue()
+                }
+            } else {
+                android.util.Log.e("TtsService", "TTS初始化失败，status=$status")
             }
         }
         
@@ -64,7 +74,11 @@ class TtsService private constructor(context: Context) {
      * 播报文本
      */
     fun speak(text: String, priority: Int = 0) {
-        if (!isEnabled || text.isBlank()) return
+        android.util.Log.d("TtsService", "speak called: text=$text, isEnabled=$isEnabled, isInitialized=$isInitialized, isSpeaking=$isSpeaking")
+        if (!isEnabled || text.isBlank()) {
+            android.util.Log.w("TtsService", "TTS未启用或文本为空，跳过播报")
+            return
+        }
         
         if (priority > 0) {
             // 高优先级，插入队列前面
@@ -73,8 +87,12 @@ class TtsService private constructor(context: Context) {
             pendingQueue.add(text)
         }
         
+        android.util.Log.d("TtsService", "队列大小: ${pendingQueue.size}")
+        
         if (isInitialized && !isSpeaking) {
             processQueue()
+        } else {
+            android.util.Log.w("TtsService", "TTS未初始化或正在播报，等待初始化完成")
         }
     }
     
@@ -88,10 +106,16 @@ class TtsService private constructor(context: Context) {
     }
     
     private fun processQueue() {
-        if (!isInitialized || isSpeaking || pendingQueue.isEmpty()) return
+        android.util.Log.d("TtsService", "processQueue: isInitialized=$isInitialized, isSpeaking=$isSpeaking, queueSize=${pendingQueue.size}")
+        if (!isInitialized || isSpeaking || pendingQueue.isEmpty()) {
+            android.util.Log.d("TtsService", "processQueue跳过: isInitialized=$isInitialized, isSpeaking=$isSpeaking, isEmpty=${pendingQueue.isEmpty()}")
+            return
+        }
         
         val text = pendingQueue.removeAt(0)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts_${System.currentTimeMillis()}")
+        android.util.Log.d("TtsService", "开始播报: $text")
+        val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts_${System.currentTimeMillis()}")
+        android.util.Log.d("TtsService", "speak调用结果: $result")
     }
     
     /**

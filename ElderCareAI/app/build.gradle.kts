@@ -7,6 +7,9 @@ plugins {
 android {
     namespace = "com.eldercare.ai"
     compileSdk = 34
+    
+    // 指定NDK版本（使用已安装的版本）
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.eldercare.ai"
@@ -24,8 +27,7 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
         
-        // 暂时注释掉原生代码编译，先确保基本项目可以构建
-        /*
+        // 启用原生代码编译（Whisper语音识别）
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-frtti", "-fexceptions", "-Wno-format")
@@ -37,7 +39,6 @@ android {
                 )
             }
         }
-        */
     }
 
     buildTypes {
@@ -101,15 +102,13 @@ android {
         noCompress += listOf("bin", "param")
     }
     
-    // 暂时注释掉原生代码编译配置
-    /*
+    // 启用原生代码编译配置（Whisper语音识别）
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
     }
-    */
 }
 
 dependencies {

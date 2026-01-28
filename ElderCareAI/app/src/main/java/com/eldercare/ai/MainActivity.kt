@@ -17,6 +17,17 @@ import com.eldercare.ai.ui.navigation.ElderCareNavigation
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 
 class MainActivity : ComponentActivity() {
+    
+    init {
+        // 加载native库（Whisper、YOLO等）
+        try {
+            System.loadLibrary("eldercare-ai")
+            android.util.Log.d("MainActivity", "Native library loaded successfully")
+        } catch (e: UnsatisfiedLinkError) {
+            android.util.Log.e("MainActivity", "Failed to load native library", e)
+        }
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
