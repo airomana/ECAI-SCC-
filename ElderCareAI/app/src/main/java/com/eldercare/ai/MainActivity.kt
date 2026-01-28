@@ -31,24 +31,32 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 初始化LLM配置
-        LlmConfig.initialize(this)
+        android.util.Log.d("MainActivity", "onCreate started")
         
-        // 设置API密钥（如果还没有配置）
-        if (!LlmConfig.isConfigured()) {
-            LlmConfig.setApiKey(this, "sk-634807447c514841a647f2e90b244389")
-        }
-        
-        enableEdgeToEdge()
-        setContent {
-            ElderCareAITheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    ElderCareApp()
+        try {
+            // 初始化LLM配置
+            LlmConfig.initialize(this)
+            
+            // 设置API密钥（如果还没有配置）
+            if (!LlmConfig.isConfigured()) {
+                LlmConfig.setApiKey(this, "sk-634807447c514841a647f2e90b244389")
+            }
+            
+            enableEdgeToEdge()
+            setContent {
+                ElderCareAITheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        ElderCareApp()
+                    }
                 }
             }
+            android.util.Log.d("MainActivity", "onCreate completed successfully")
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error in onCreate", e)
+            throw e
         }
     }
 }

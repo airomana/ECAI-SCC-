@@ -3,12 +3,15 @@ package com.eldercare.ai.ui.screens.settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -24,20 +27,34 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    onNavigateToFamilyGuard: () -> Unit = {},
+    onLogout: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showHealthProfileDialog by remember { mutableStateOf(false) }
     var showEmergencyContactDialog by remember { mutableStateOf(false) }
+    var showInviteCodeDialog by remember { mutableStateOf(false) }
+    var showLinkInviteCodeDialog by remember { mutableStateOf(false) }
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
-    val settingsManager = remember { SettingsManager(context) }
+    val settingsManager = remember { SettingsManager.getInstance(context) }
     val ttsService = remember { TtsService.getInstance(context) }
+    val userService = remember { 
+        com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), settingsManager) 
+    }
     
-    // 读取TTS设置
+    // 读取TTS设置和角色
     var voiceEnabled by remember { mutableStateOf(settingsManager.ttsEnabled) }
     var vibrationEnabled by remember { mutableStateOf(settingsManager.vibrationEnabled) }
     var fontSize by remember { mutableStateOf(settingsManager.fontSize) }
+    var currentRole by remember { mutableStateOf(settingsManager.getUserRole()) }
+    var currentUser by remember { mutableStateOf<com.eldercare.ai.data.entity.User?>(null) }
+    
+    // 加载当前用户信息
+    LaunchedEffect(Unit) {
+        currentUser = userService.getCurrentUser()
+    }
     
     Column(
         modifier = Modifier
@@ -95,6 +112,52 @@ fun SettingsScreen(
             }
             
             item {
+                SettingsSection(title = "账户设置") {
+                    SettingsItem(
+                        icon = Icons.Default.AccountCircle,
+                        title = "当前身份",
+                        subtitle = if (currentRole == "parent") "父母端" else "子女端",
+                        onClick = { }
+                    )
+                    
+                    // 父母端：查看邀请码
+                    if (currentRole == "parent") {
+                        SettingsItem(
+                            icon = Icons.Default.Info,
+                            title = "我的邀请码",
+                            subtitle = currentUser?.inviteCode ?: "加载中...",
+                            onClick = { showInviteCodeDialog = true }
+                        )
+                    }
+                    
+                    // 子女端：通过邀请码关联
+                    if (currentRole == "child" && currentUser?.familyId == null) {
+                        SettingsItem(
+                            icon = Icons.Default.Link,
+                            title = "关联家庭",
+                            subtitle = "输入邀请码关联到父母",
+                            onClick = { showLinkInviteCodeDialog = true }
+                        )
+                    }
+                }
+            }
+            
+            item {
+                if (currentRole == "parent") {
+                    // 父母端不显示子女守护中心入口
+                } else {
+                    SettingsSection(title = "家庭功能") {
+                        SettingsItem(
+                            icon = Icons.Default.People,
+                            title = "子女守护中心",
+                            subtitle = "查看父母饮食记录和周报",
+                            onClick = onNavigateToFamilyGuard
+                        )
+                    }
+                }
+            }
+            
+            item {
                 SettingsSection(title = "使用设置") {
                     SettingsItemWithSwitch(
                         icon = Icons.Default.VolumeUp,
@@ -148,12 +211,19 @@ fun SettingsScreen(
                         subtitle = "400-123-4567",
                         onClick = { }
                     )
-                    
+                }
+            }
+            
+            item {
+                SettingsSection(title = "账户") {
                     SettingsItem(
-                        icon = Icons.Default.Update,
-                        title = "版本信息",
-                        subtitle = "银发智膳助手 v1.0",
-                        onClick = { }
+                        icon = Icons.Default.PersonOff,
+                        title = "退出登录",
+                        subtitle = "退出当前账号",
+                        onClick = {
+                            settingsManager.logout()
+                            onLogout()
+                        }
                     )
                 }
             }
@@ -194,6 +264,164 @@ fun SettingsScreen(
             }
         )
     }
+    
+    // 查看邀请码对话框（父母端）
+    if (showInviteCodeDialog) {
+        InviteCodeDialog(
+            inviteCode = currentUser?.inviteCode ?: "",
+            onDismiss = { showInviteCodeDialog = false }
+        )
+    }
+    
+    // 通过邀请码关联对话框（子女端）
+    var linkErrorMessage by remember { mutableStateOf<String?>(null) }
+    if (showLinkInviteCodeDialog) {
+        LinkInviteCodeDialog(
+            errorMessage = linkErrorMessage,
+            onDismiss = { 
+                showLinkInviteCodeDialog = false
+                linkErrorMessage = null
+            },
+            onLink = { inviteCode ->
+                scope.launch {
+                    val userId = settingsManager.getCurrentUserId()
+                    if (userId != null) {
+                        val result = userService.linkFamilyByInviteCode(userId, inviteCode)
+                        when (result) {
+                            is com.eldercare.ai.auth.LinkResult.Success -> {
+                                currentUser = result.user
+                                showLinkInviteCodeDialog = false
+                                linkErrorMessage = null
+                            }
+                            is com.eldercare.ai.auth.LinkResult.Error -> {
+                                linkErrorMessage = result.message
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun InviteCodeDialog(
+    inviteCode: String,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("我的邀请码") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("请将以下邀请码分享给您的子女：")
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Text(
+                        text = inviteCode,
+                        style = MaterialTheme.typography.displayMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(24.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+                
+                Text(
+                    text = "子女端注册时输入此邀请码即可关联到您的家庭",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("知道了")
+            }
+        }
+    )
+}
+
+@Composable
+fun LinkInviteCodeDialog(
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onLink: (String) -> Unit
+) {
+    var inviteCode by remember { mutableStateOf("") }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
+    
+    // 同步外部错误信息
+    LaunchedEffect(errorMessage) {
+        localErrorMessage = errorMessage
+    }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("关联家庭") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("请输入父母提供的邀请码：")
+                
+                OutlinedTextField(
+                    value = inviteCode,
+                    onValueChange = { 
+                        inviteCode = it
+                        localErrorMessage = null
+                    },
+                    label = { Text("邀请码") },
+                    placeholder = { Text("请输入6位邀请码") },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = localErrorMessage != null
+                )
+                
+                if (localErrorMessage != null) {
+                    Text(
+                        text = localErrorMessage!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                
+                Text(
+                    text = "关联后即可查看父母的饮食记录和健康档案",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (inviteCode.isBlank()) {
+                        localErrorMessage = "请输入邀请码"
+                    } else {
+                        onLink(inviteCode)
+                    }
+                },
+                enabled = inviteCode.isNotBlank()
+            ) {
+                Text("关联")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable

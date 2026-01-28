@@ -142,6 +142,131 @@ class LlmService private constructor(private val context: Context) {
     }
     
     /**
+     * 为语音日记生成温暖的AI回应
+     * 
+     * @param diaryContent 日记内容（用户说的话）
+     * @param emotion 识别到的情绪（满意、担心、孤单、平静等）
+     * @param userName 用户名称（可选）
+     * @return AI回应文本，失败时返回null
+     */
+    suspend fun generateDiaryResponse(
+        diaryContent: String,
+        emotion: String,
+        userName: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            // 检查配置
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+            
+            // 检查是否启用
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+            
+            // 构建提示词
+            val prompt = buildDiaryResponsePrompt(diaryContent, emotion, userName)
+            
+            // 构建请求
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "system",
+                            content = "你是一个温暖贴心的饮食陪伴助手，专门为老年人服务。你的回应要：\n" +
+                                    "1. 语言亲切自然，像家人一样温暖\n" +
+                                    "2. 用简单易懂的大白话，避免专业术语\n" +
+                                    "3. 根据老人的情绪给予适当的关怀和鼓励\n" +
+                                    "4. 可以适当给出简单的饮食建议\n" +
+                                    "5. 控制在30-50字以内，适合语音播报\n" +
+                                    "6. 语气要温和、关心，让老人感受到陪伴"
+                        ),
+                        DashScopeMessage(
+                            role = "user",
+                            content = prompt
+                        )
+                    )
+                ),
+                parameters = DashScopeParameters(
+                    temperature = 0.8,  // 稍高一些，让回应更自然
+                    max_tokens = 200,
+                    top_p = 0.9
+                )
+            )
+            
+            // 发送请求
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+            
+            if (response.isSuccessful) {
+                val body = response.body()
+                val responseText = body?.output?.choices?.firstOrNull()?.message?.content
+                
+                if (responseText != null) {
+                    Log.d(TAG, "成功生成AI回应: $responseText")
+                    return@withContext responseText.trim()
+                } else {
+                    Log.w(TAG, "响应体为空或格式不正确")
+                    return@withContext null
+                }
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "API调用失败: ${response.code()}, $errorBody")
+                return@withContext null
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "生成AI回应时出错", e)
+            return@withContext null
+        }
+    }
+    
+    /**
+     * 构建语音日记回应的提示词
+     */
+    private fun buildDiaryResponsePrompt(
+        diaryContent: String,
+        emotion: String,
+        userName: String?
+    ): String {
+        val name = userName?.takeIf { it.isNotBlank() } ?: "您"
+        
+        return buildString {
+            append("一位老人刚才对我说：\"$diaryContent\"")
+            append("\n\n我识别到老人的情绪是：$emotion")
+            append("\n\n请用温暖亲切的语气回应老人，就像家人一样关心他。")
+            append("\n\n要求：")
+            append("\n1. 称呼老人为\"$name\"（如果提供了名字）或\"您\"（如果没有名字）")
+            append("\n2. 对老人的分享表示理解和关心")
+            append("\n3. 根据情绪给予适当的回应：")
+            when (emotion) {
+                "满意" -> {
+                    append("\n   - 如果是满意：表达高兴，鼓励继续保持")
+                }
+                "担心" -> {
+                    append("\n   - 如果是担心：给予安慰，提供简单的建议")
+                }
+                "孤单" -> {
+                    append("\n   - 如果是孤单：表达理解和陪伴，建议多联系家人")
+                }
+                else -> {
+                    append("\n   - 如果是平静：简单回应，表示记住了")
+                }
+            }
+            append("\n4. 可以简单提及饮食建议（如果有明显问题）")
+            append("\n5. 语言要自然、口语化，适合语音播报")
+            append("\n6. 控制在30-50字以内")
+            append("\n\n请直接给出回应，不要加引号或其他格式。")
+        }
+    }
+    
+    /**
      * 构建提示词
      */
     private fun buildPrompt(

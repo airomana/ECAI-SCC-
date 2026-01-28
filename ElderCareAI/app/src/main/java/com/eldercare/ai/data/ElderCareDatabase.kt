@@ -5,29 +5,36 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.eldercare.ai.data.dao.DishDao
 import com.eldercare.ai.data.dao.HealthProfileDao
 import com.eldercare.ai.data.dao.DiaryEntryDao
 import com.eldercare.ai.data.dao.FridgeItemDao
+import com.eldercare.ai.data.dao.UserDao
+import com.eldercare.ai.data.dao.FamilyRelationDao
 import com.eldercare.ai.data.entity.Dish
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.DiaryEntryEntity
+import com.eldercare.ai.data.entity.User
+import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.converters.Converters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 const val ELDER_CARE_DB_NAME = "elder_care_db"
-const val ELDER_CARE_DB_VERSION = 1
+const val ELDER_CARE_DB_VERSION = 2
 
 @Database(
     entities = [
         Dish::class,
         HealthProfile::class,
         DiaryEntryEntity::class,
-        FridgeItemEntity::class
+        FridgeItemEntity::class,
+        User::class,
+        FamilyRelation::class
     ],
     version = ELDER_CARE_DB_VERSION,
     exportSchema = false
@@ -39,25 +46,85 @@ abstract class ElderCareDatabase : RoomDatabase() {
     abstract fun healthProfileDao(): HealthProfileDao
     abstract fun diaryEntryDao(): DiaryEntryDao
     abstract fun fridgeItemDao(): FridgeItemDao
+    abstract fun userDao(): UserDao
+    abstract fun familyRelationDao(): FamilyRelationDao
 
     companion object {
         @Volatile
         private var INSTANCE: ElderCareDatabase? = null
+
+        /**
+         * 数据库迁移：从版本1到版本2
+         * 添加User和FamilyRelation表
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Starting migration from version 1 to 2")
+                    
+                    // 创建User表
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS user (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            phone TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            inviteCode TEXT,
+                            familyId TEXT,
+                            nickname TEXT,
+                            createdAt INTEGER NOT NULL,
+                            lastLoginAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_user_phone ON user(phone)")
+                    
+                    // 创建FamilyRelation表
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS family_relation (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            familyId TEXT NOT NULL,
+                            parentUserId INTEGER NOT NULL,
+                            childUserId INTEGER NOT NULL,
+                            linkedAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_relation_familyId ON family_relation(familyId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_relation_parentUserId ON family_relation(parentUserId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_relation_childUserId ON family_relation(childUserId)")
+                    
+                    android.util.Log.d("ElderCareDatabase", "Migration completed successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Migration failed", e)
+                    throw e
+                }
+            }
+        }
 
         fun getDatabase(
             context: Context,
             scope: CoroutineScope
         ): ElderCareDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    ElderCareDatabase::class.java,
-                    ELDER_CARE_DB_NAME
-                )
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Initializing database...")
+                    val instance = Room.databaseBuilder(
+                        context.applicationContext,
+                        ElderCareDatabase::class.java,
+                        ELDER_CARE_DB_NAME
+                    )
+                    .addMigrations(MIGRATION_1_2)
                     .addCallback(ElderCareDatabaseCallback(scope))
+                    .fallbackToDestructiveMigrationOnDowngrade() // 降级时重建数据库
+                    .allowMainThreadQueries() // 临时允许主线程查询，避免启动阻塞
                     .build()
-                INSTANCE = instance
-                instance
+                    INSTANCE = instance
+                    android.util.Log.d("ElderCareDatabase", "Database initialized successfully")
+                    instance
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Failed to initialize database", e)
+                    throw e
+                }
             }
         }
     }

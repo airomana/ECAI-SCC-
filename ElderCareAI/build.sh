@@ -101,12 +101,18 @@ else
             read -p "是否要安装到设备? (y/n): " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
+                echo "🗑️  先卸载旧版本（如果存在）..."
+                adb uninstall com.eldercare.ai 2>/dev/null
                 echo "📲 正在安装到设备..."
-                adb install -r "$APK_FILE"
+                adb install "$APK_FILE"
                 if [ $? -eq 0 ]; then
                     echo "✅ 安装成功!"
                 else
                     echo "❌ 安装失败!"
+                    echo "💡 提示: 如果安装失败，请尝试:"
+                    echo "   1. 手动卸载应用: adb uninstall com.eldercare.ai"
+                    echo "   2. 检查MIUI安全设置，允许安装未知来源应用"
+                    echo "   3. 重新运行安装: adb install $APK_FILE"
                 fi
             fi
         fi

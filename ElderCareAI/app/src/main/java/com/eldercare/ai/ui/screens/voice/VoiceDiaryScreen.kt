@@ -44,6 +44,7 @@ fun VoiceDiaryScreen(
     var isRecording by remember { mutableStateOf(false) }
     var recordedText by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
+    var isGeneratingResponse by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     
     val db = rememberElderCareDatabase()
@@ -51,6 +52,17 @@ fun VoiceDiaryScreen(
     val whisperProcessor = remember { WhisperProcessor.getInstance(context) }
     val audioRecorder = remember { AudioRecorder() }
     val androidSpeechRecognizer = remember { AndroidSpeechRecognizer.getInstance(context) }
+    val llmService = remember { com.eldercare.ai.llm.LlmService.getInstance(context) }
+    val ttsService = remember { com.eldercare.ai.tts.TtsService.getInstance(context) }
+    val settingsManager = remember { com.eldercare.ai.data.SettingsManager.getInstance(context) }
+    val userService = remember { 
+        try {
+            com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), settingsManager)
+        } catch (e: Exception) {
+            android.util.Log.e("VoiceDiary", "Failed to create UserService", e)
+            null
+        }
+    }
     
     // 选择使用哪种识别方式
     // true = 使用Android原生SpeechRecognizer（真实识别，需要网络，立即可用）
@@ -224,6 +236,7 @@ fun VoiceDiaryScreen(
             isRecording = isRecording,
             recordedText = recordedText,
             isProcessing = isProcessing,
+            isGeneratingResponse = isGeneratingResponse,
             errorMessage = errorMessage,
             onStartRecording = { 
                 launchRecording()
@@ -329,25 +342,66 @@ fun VoiceDiaryScreen(
             onSaveDiary = {
                 if (recordedText.isNotEmpty()) {
                     scope.launch {
-                        // 简单的情感分析
-                        val emotion = when {
-                            recordedText.contains("好吃") || recordedText.contains("满意") || recordedText.contains("不错") -> "满意"
-                            recordedText.contains("一个人") || recordedText.contains("孤单") -> "孤单"
-                            recordedText.contains("难受") || recordedText.contains("不舒服") -> "担心"
-                            else -> "平静"
+                        // 显示"AI正在思考..."
+                        withContext(Dispatchers.Main) {
+                            isGeneratingResponse = true
                         }
                         
+                        // 改进的情感分析 - 使用更全面的关键词检测
+                        val emotion = analyzeEmotionFromText(recordedText)
+                        
+                        // 获取当前用户信息（用于个性化回应）
+                        val currentUser = try {
+                            userService?.getCurrentUser()
+                        } catch (e: Exception) {
+                            android.util.Log.w("VoiceDiary", "获取用户信息失败", e)
+                            null
+                        }
+                        val userName = currentUser?.nickname?.takeIf { it.isNotBlank() } 
+                            ?: currentUser?.phone?.takeIf { it.isNotBlank() }?.let { 
+                                // 如果只有手机号，使用"您"来称呼
+                                null
+                            }
+                        
+                        // 生成AI回应（优先使用LLM，失败则使用本地模板）
+                        var aiResponse = try {
+                            // 尝试使用LLM生成回应
+                            llmService.generateDiaryResponse(
+                                diaryContent = recordedText,
+                                emotion = emotion,
+                                userName = userName
+                            ) ?: generateLocalDiaryResponse(recordedText, emotion, userName)
+                        } catch (e: Exception) {
+                            android.util.Log.w("VoiceDiary", "LLM生成回应失败，使用本地模板", e)
+                            generateLocalDiaryResponse(recordedText, emotion, userName)
+                        }
+                        
+                        // 保存日记
                         db.diaryEntryDao().insert(
                             DiaryEntryEntity(
                                 date = System.currentTimeMillis(),
                                 content = recordedText,
                                 emotion = emotion,
-                                aiResponse = "感谢您的分享！我会记住您今天的饮食情况。"
+                                aiResponse = aiResponse
                             )
                         )
+                        
+                        // 隐藏"AI正在思考..."
+                        withContext(Dispatchers.Main) {
+                            isGeneratingResponse = false
+                        }
+                        
+                        // 通过TTS播报AI回应
+                        withContext(Dispatchers.Main) {
+                            ttsService.speak(aiResponse, priority = 1)
+                        }
+                        
+                        // 清空输入
+                        withContext(Dispatchers.Main) {
+                            recordedText = ""
+                            errorMessage = null
+                        }
                     }
-                    recordedText = ""
-                    errorMessage = null
                 }
             }
         )
@@ -379,6 +433,7 @@ fun VoiceRecordingSection(
     isRecording: Boolean,
     recordedText: String,
     isProcessing: Boolean = false,
+    isGeneratingResponse: Boolean = false,
     errorMessage: String? = null,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
@@ -421,6 +476,7 @@ fun VoiceRecordingSection(
             
             Text(
                 text = when {
+                    isGeneratingResponse -> "AI正在思考..."
                     isRecording -> "正在录音..."
                     isProcessing && recordedText.isEmpty() -> "正在识别..."
                     else -> "点击开始录音"
@@ -438,8 +494,8 @@ fun VoiceRecordingSection(
                 )
             }
             
-            // 处理中指示器（只在没有识别结果时显示）
-            if (isProcessing && recordedText.isEmpty()) {
+            // 处理中指示器（识别或生成回应时显示）
+            if ((isProcessing && recordedText.isEmpty()) || isGeneratingResponse) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(24.dp),
                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -471,12 +527,20 @@ fun VoiceRecordingSection(
                         
                         Button(
                             onClick = onSaveDiary,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isGeneratingResponse
                         ) {
-                            Text(
-                                text = "保存记录",
-                                style = MaterialTheme.typography.titleMedium
-                            )
+                            if (isGeneratingResponse) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Text(
+                                    text = "保存记录",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
                         }
                     }
                 }
@@ -572,6 +636,198 @@ data class DiaryEntry(
     val emotion: String,
     val aiResponse: String
 )
+
+/**
+ * 情感分析函数 - 基于关键词检测
+ */
+/**
+ * 生成本地模板的AI回应（降级方案）
+ * 当LLM不可用时使用
+ */
+private fun generateLocalDiaryResponse(content: String, emotion: String, userName: String? = null): String {
+    val lowerContent = content.lowercase()
+    val name = userName?.takeIf { it.isNotBlank() } ?: "您"
+    
+    // 提取食物关键词（简单匹配）
+    val foodKeywords = listOf("肉", "鱼", "菜", "粥", "饭", "汤", "蛋", "鸡", "鸭", "虾", "豆腐", "青菜", "萝卜", "土豆", "番茄")
+    val mentionedFoods = foodKeywords.filter { lowerContent.contains(it) }
+    
+    // 提取具体食物名称（更精确的匹配）
+    val specificFoods = when {
+        lowerContent.contains("红烧肉") -> "红烧肉"
+        lowerContent.contains("清蒸鱼") -> "清蒸鱼"
+        lowerContent.contains("番茄鸡蛋") || lowerContent.contains("西红柿鸡蛋") -> "番茄鸡蛋"
+        lowerContent.contains("小米粥") -> "小米粥"
+        lowerContent.contains("白粥") -> "白粥"
+        lowerContent.contains("青菜") -> "青菜"
+        mentionedFoods.isNotEmpty() -> mentionedFoods.first()
+        else -> null
+    }
+    
+    return when (emotion) {
+        "满意" -> {
+            when {
+                specificFoods != null -> {
+                    "太好了${name}！听起来您今天吃的${specificFoods}很不错呢，很有营养。继续保持这样的好习惯，身体会越来越好的！"
+                }
+                lowerContent.contains("好吃") || lowerContent.contains("美味") || lowerContent.contains("很好吃") -> {
+                    "真为您高兴${name}！吃得开心最重要，我会记住您今天的好心情。继续保持哦！"
+                }
+                lowerContent.contains("不错") || lowerContent.contains("挺好") -> {
+                    "很好${name}！听起来您今天吃得挺满意的。继续保持这样的好习惯！"
+                }
+                else -> {
+                    "感谢您的分享${name}！我会记住您今天的饮食情况，继续保持哦！"
+                }
+            }
+        }
+        "担心" -> {
+            when {
+                lowerContent.contains("油腻") || lowerContent.contains("油") || lowerContent.contains("肥") -> {
+                    "我理解您的担心${name}。确实，太油腻的食物对身体不太好，特别是对血压和血脂。下次可以试试清淡一点的菜，比如清蒸或者水煮的，对身体更好。"
+                }
+                lowerContent.contains("咸") || lowerContent.contains("盐") -> {
+                    "确实${name}，太咸了对身体不好，特别是对血压。下次可以提醒厨师少放点盐，或者多喝点水，帮助身体排出多余的盐分。"
+                }
+                lowerContent.contains("甜") || lowerContent.contains("糖") -> {
+                    "我明白您的担心${name}。糖分高的食物确实要控制，特别是对血糖。可以少吃一点，或者选择其他替代品，比如用水果代替甜点。"
+                }
+                lowerContent.contains("辣") -> {
+                    "我理解${name}，太辣的食物对肠胃不太好。下次可以提醒厨师少放点辣椒，或者选择不辣的菜。"
+                }
+                else -> {
+                    "别太担心${name}，偶尔吃一次没关系的。下次注意一下就好，我会帮您记住的。"
+                }
+            }
+        }
+        "孤单" -> {
+            when {
+                lowerContent.contains("一个人") || lowerContent.contains("独自") -> {
+                    "我理解您的心情${name}。一个人吃饭确实有点冷清，但您并不孤单，我会一直陪着您。有空的时候，可以多给孩子们打个电话，他们一定很想念您。"
+                }
+                lowerContent.contains("没人") || lowerContent.contains("冷清") -> {
+                    "我明白${name}，一个人在家确实有点冷清。但您要记住，孩子们虽然不在身边，但心里一直惦记着您。有空多联系联系，或者找邻居聊聊天，心情会好很多。"
+                }
+                else -> {
+                    "我理解您的心情${name}。虽然现在是一个人，但您并不孤单。我会一直陪着您，记录您的每一天。记得多和孩子们联系，他们一定很想念您。"
+                }
+            }
+        }
+        else -> {
+            when {
+                specificFoods != null -> {
+                    "好的${name}，我记住了您今天吃了${specificFoods}。感谢您的分享！"
+                }
+                mentionedFoods.isNotEmpty() -> {
+                    "好的${name}，我记住了您今天吃了${mentionedFoods.first()}。感谢您的分享！"
+                }
+                else -> {
+                    "感谢您的分享${name}！我会记住您今天的饮食情况。"
+                }
+            }
+        }
+    }
+}
+
+private fun analyzeEmotionFromText(text: String): String {
+    if (text.isEmpty()) return "平静"
+    
+    val lowerText = text.lowercase()
+    
+    // 积极情感关键词（扩展列表，包含更多变体）
+    val positiveKeywords = listOf(
+        // 好吃相关
+        "好吃", "很好吃", "特别好吃", "非常好吃", "真好吃", "太好吃了", "超级好吃",
+        "美味", "很美味", "特别美味", "非常美味", "真美味", "太美味了",
+        "香", "很香", "特别香", "非常香", "真香", "太香了",
+        "甜", "很甜", "特别甜", "非常甜", "真甜", "太甜了",
+        // 情绪表达
+        "开心", "很开心", "特别开心", "非常开心", "真开心", "太开心了",
+        "高兴", "很高兴", "特别高兴", "非常高兴", "真高兴", "太高兴了",
+        "满意", "很满意", "特别满意", "非常满意", "真满意", "太满意了",
+        "不错", "很不错", "特别不错", "非常不错", "真不错", "太不错了",
+        "挺好", "挺好的", "特别挺好", "非常挺好",
+        "喜欢", "很喜欢", "特别喜欢", "非常喜欢", "真喜欢", "太喜欢了",
+        "舒服", "很舒服", "特别舒服", "非常舒服", "真舒服", "太舒服了",
+        "温暖", "很温暖", "特别温暖", "非常温暖", "真温暖", "太温暖了",
+        "幸福", "很幸福", "特别幸福", "非常幸福", "真幸福", "太幸福了",
+        "快乐", "很快乐", "特别快乐", "非常快乐", "真快乐", "太快乐了",
+        "愉快", "很愉快", "特别愉快", "非常愉快", "真愉快", "太愉快了",
+        "很棒", "很很棒", "特别很棒", "非常很棒", "真很棒", "太棒了",
+        "很好", "很好很好", "特别好", "非常好", "真好", "太好了",
+        "满足", "很满足", "特别满足", "非常满足", "真满足", "太满足了",
+        "享受", "很享受", "特别享受", "非常享受", "真享受", "太享受了",
+        "可口", "很可口", "特别可口", "非常可口", "真可口", "太可口了",
+        "香甜", "很香甜", "特别香甜", "非常香甜", "真香甜", "太香甜了",
+        // 其他积极表达
+        "赞", "很赞", "特别赞", "非常赞", "真赞", "太赞了",
+        "棒", "很棒", "特别棒", "非常棒", "真棒", "太棒了",
+        "好", "很好", "特别好", "非常好", "真好", "太好了"
+    )
+    
+    // 消极情感关键词
+    val negativeKeywords = listOf(
+        "难吃", "很难吃", "特别难吃", "非常难吃", "真难吃", "太难吃了",
+        "苦", "很苦", "特别苦", "非常苦", "真苦", "太苦了",
+        "咸", "很咸", "特别咸", "非常咸", "真咸", "太咸了",
+        "淡", "很淡", "特别淡", "非常淡", "真淡", "太淡了",
+        "不好", "很不好", "特别不好", "非常不好", "真不好", "太不好了",
+        "难受", "很难受", "特别难受", "非常难受", "真难受", "太难受了",
+        "不舒服", "很不舒服", "特别不舒服", "非常不舒服", "真不舒服", "太不舒服了",
+        "生气", "很生气", "特别生气", "非常生气", "真生气", "太生气了",
+        "烦", "很烦", "特别烦", "非常烦", "真烦", "太烦了",
+        "累", "很累", "特别累", "非常累", "真累", "太累了",
+        "疼", "很疼", "特别疼", "非常疼", "真疼", "太疼了",
+        "不开心", "很不开心", "特别不开心", "非常不开心", "真不开心", "太不开心了",
+        "失望", "很失望", "特别失望", "非常失望", "真失望", "太失望了",
+        "讨厌", "很讨厌", "特别讨厌", "非常讨厌", "真讨厌", "太讨厌了",
+        "不喜欢", "很不喜欢", "特别不喜欢", "非常不喜欢", "真不喜欢", "太不喜欢了",
+        "糟糕", "很糟糕", "特别糟糕", "非常糟糕", "真糟糕", "太糟糕了",
+        "痛苦", "很痛苦", "特别痛苦", "非常痛苦", "真痛苦", "太痛苦了",
+        "难过", "很难过", "特别难过", "非常难过", "真难过", "太难过了",
+        "伤心", "很伤心", "特别伤心", "非常伤心", "真伤心", "太伤心了",
+        "烦躁", "很烦躁", "特别烦躁", "非常烦躁", "真烦躁", "太烦躁了",
+        "疲惫", "很疲惫", "特别疲惫", "非常疲惫", "真疲惫", "太疲惫了"
+    )
+    
+    // 孤独情感关键词
+    val lonelyKeywords = listOf(
+        "一个人", "一个人吃", "一个人住", "一个人在家",
+        "孤单", "很孤单", "特别孤单", "非常孤单", "真孤单", "太孤单了",
+        "寂寞", "很寂寞", "特别寂寞", "非常寂寞", "真寂寞", "太寂寞了",
+        "没人", "没人陪", "没人管", "没人理", "没人关心",
+        "独自", "独自一人", "独自在家", "独自生活",
+        "冷清", "很冷清", "特别冷清", "非常冷清", "真冷清", "太冷清了",
+        "想念", "很想念", "特别想念", "非常想念", "真想念", "太想念了",
+        "思念", "很思念", "特别思念", "非常思念", "真思念", "太思念了",
+        "想家", "很想家", "特别想家", "非常想家", "真想家", "太想家了",
+        "想孩子", "很想孩子", "特别想孩子", "非常想孩子", "真想孩子", "太想孩子了",
+        "想老伴", "很想老伴", "特别想老伴", "非常想老伴", "真想老伴", "太想老伴了",
+        "孤独", "很孤独", "特别孤独", "非常孤独", "真孤独", "太孤独了",
+        "独自一人", "独自一人在家", "独自一人生活",
+        "没人陪", "没人陪我", "没人陪伴", "没人陪伴我"
+    )
+    
+    // 计算匹配的关键词数量
+    val positiveCount = positiveKeywords.count { lowerText.contains(it) }
+    val negativeCount = negativeKeywords.count { lowerText.contains(it) }
+    val lonelyCount = lonelyKeywords.count { lowerText.contains(it) }
+    
+    // 添加调试日志
+    android.util.Log.d("EmotionAnalysis", "文本: $text")
+    android.util.Log.d("EmotionAnalysis", "积极词数: $positiveCount, 消极词数: $negativeCount, 孤独词数: $lonelyCount")
+    
+    // 根据匹配的关键词数量决定情感
+    val emotion = when {
+        lonelyCount > 0 -> "孤单"
+        negativeCount > positiveCount && negativeCount > 0 -> "担心"
+        positiveCount > 0 -> "满意"
+        else -> "平静"
+    }
+    
+    android.util.Log.d("EmotionAnalysis", "识别结果: $emotion")
+    return emotion
+}
 
 private fun DiaryEntryEntity.toDiaryEntry() = DiaryEntry(
     id = id,
