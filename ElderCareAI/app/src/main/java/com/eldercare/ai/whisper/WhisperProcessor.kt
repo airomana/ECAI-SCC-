@@ -75,7 +75,8 @@ class WhisperProcessor private constructor(context: Context) {
     /**
      * 从assets复制模型文件到内部存储
      */
-    fun initFromAssets(context: Context, assetFileName: String = "ggml-base-q8_0.bin"): Boolean {
+    fun initFromAssets(context: Context, assetFileName: String = "ggml-tiny-q8_0.bin"): Boolean {
+        Log.d(TAG, "Initializing Whisper with model: $assetFileName")
         val modelDir = File(context.filesDir, "whisper")
         if (!modelDir.exists()) {
             modelDir.mkdirs()
@@ -85,7 +86,9 @@ class WhisperProcessor private constructor(context: Context) {
         
         // 如果文件已存在，直接使用
         if (modelFile.exists()) {
-            Log.d(TAG, "Model file already exists: ${modelFile.absolutePath}")
+            val fileSizeMB = modelFile.length() / (1024.0 * 1024.0)
+            Log.d(TAG, "Model file already exists: ${modelFile.absolutePath} (${String.format("%.2f", fileSizeMB)} MB)")
+            Log.d(TAG, "Using model: $assetFileName")
             return init(modelFile.absolutePath)
         }
         
@@ -96,10 +99,12 @@ class WhisperProcessor private constructor(context: Context) {
                     input.copyTo(output)
                 }
             }
-            Log.d(TAG, "Model file copied to: ${modelFile.absolutePath}")
+            val fileSizeMB = modelFile.length() / (1024.0 * 1024.0)
+            Log.d(TAG, "Model file copied to: ${modelFile.absolutePath} (${String.format("%.2f", fileSizeMB)} MB)")
+            Log.d(TAG, "Using model: $assetFileName")
             return init(modelFile.absolutePath)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to copy model file from assets", e)
+            Log.e(TAG, "Failed to copy model file from assets: $assetFileName", e)
             return false
         }
     }

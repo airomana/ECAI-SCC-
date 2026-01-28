@@ -1,6 +1,7 @@
 #include "whisper_processor.h"
 #include <android/log.h>
 #include <algorithm>
+#include <chrono>
 
 #ifdef WHISPER_CPP_AVAILABLE
 #include "whisper.h"
@@ -75,28 +76,50 @@ std::string WhisperProcessor::transcribe(const float* audio_data, int length) {
             LOGE("Falling back to simulation mode");
             // 回退到模拟模式，继续执行下面的代码
         } else {
-            // 使用真实的whisper.cpp进行识别
+            // 使用真实的whisper.cpp进行识别 - 使用最简化的快速配置
             struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+            
+            // 最简化的快速配置
             params.print_progress = false;
             params.print_special = false;
             params.print_realtime = false;
             params.translate = false;
             params.language = "zh";  // 中文
-            params.n_threads = 4;     // 线程数
+            
+            // 使用更多线程以加快速度（Android设备通常有4-8核）
+            params.n_threads = 6;  // 增加到6线程
+            
             params.offset_ms = 0;
-            params.no_context = true;
-            params.single_segment = false;
+            params.no_context = true;  // 不使用上下文可以加快速度
+            params.single_segment = false;  // 不使用single_segment，保持默认行为
+            
+            // 计算音频时长（用于性能统计和优化）
+            float audio_duration = processed_length / 16000.0f;
+            
             params.suppress_blank = true;
-            params.suppress_nst = false;  // 使用新的参数名
+            params.suppress_nst = false;
             params.temperature = 0.0f;
-            params.max_len = 0;
+            params.max_len = 0;  // 使用默认值，不限制长度
             params.token_timestamps = false;
-            params.audio_ctx = 0;
+            params.audio_ctx = 0;  // 使用默认值，不要减小
             params.prompt_tokens = nullptr;
             params.prompt_n_tokens = 0;
+            params.no_timestamps = true;  // 不需要时间戳
+            params.detect_language = false;  // 已指定语言
+            
+            // 记录开始时间（用于性能统计）
+            auto start_time = std::chrono::high_resolution_clock::now();
             
             // 执行识别
             int ret = whisper_full((struct whisper_context*)whisper_ctx_, params, processed_data, processed_length);
+            
+            // 计算耗时
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            float speed_ratio = audio_duration / (duration_ms / 1000.0f);
+            LOGI("Whisper processing: audio=%.2fs, processing=%.2fs, speed=%.2fx realtime, threads=%d", 
+                 audio_duration, duration_ms / 1000.0f, speed_ratio, params.n_threads);
+            
             if (ret != 0) {
                 LOGE("Whisper transcription failed with code: %d", ret);
                 // 识别失败，回退到模拟模式
