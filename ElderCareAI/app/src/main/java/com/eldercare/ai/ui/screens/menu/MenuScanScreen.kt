@@ -284,6 +284,7 @@ fun MenuScanScreen(
                 }.toString()
                 
                 // TTS播报（使用大白话）
+                android.util.Log.d("MenuScan", "准备TTS播报，结果数量: ${results.size}")
                 if (results.isNotEmpty()) {
                     val highRiskCount = results.count { it.riskLevel == RiskLevel.HIGH }
                     val userName = healthProfile?.name?.takeIf { it.isNotBlank() } ?: "您"
@@ -297,6 +298,7 @@ fun MenuScanScreen(
                             append("。")
                             append(result.healthAdvice)
                         }
+                        android.util.Log.d("MenuScan", "TTS播报单道菜: $message")
                         ttsService.speak(message, priority = 1)
                     } else {
                         // 多道菜，摘要播报
@@ -307,15 +309,18 @@ fun MenuScanScreen(
                             }
                             append("，可以查看详细建议")
                         }
+                        android.util.Log.d("MenuScan", "TTS播报多道菜: $message")
                         ttsService.speak(message, priority = 1)
                         
                         // 如果有高风险菜品，单独播报
                         results.filter { it.riskLevel == RiskLevel.HIGH }.take(2).forEach { result ->
                             val warningMessage = "${result.name}，${result.healthAdvice}"
+                            android.util.Log.d("MenuScan", "TTS播报高风险: $warningMessage")
                             ttsService.speak(warningMessage, priority = 1)
                         }
                     }
                 } else if (text.isNotBlank()) {
+                    android.util.Log.d("MenuScan", "TTS播报：未提取到菜名")
                     ttsService.speak("已识别文字，但未提取到菜名，请查看识别结果")
                 }
                 

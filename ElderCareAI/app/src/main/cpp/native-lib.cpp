@@ -1,10 +1,10 @@
 #include <jni.h>
 #include <string>
 #include <android/log.h>
-#include <android/bitmap.h>
+// #include <android/bitmap.h>  // 暂时不需要
 #include "common/common.h"
-#include "ocr/paddle_ocr.h"
-#include "yolo/yolo_detector.h"
+// #include "ocr/paddle_ocr.h"  // 暂时不需要，需要OpenCV
+// #include "yolo/yolo_detector.h"  // 暂时不需要，需要OpenCV和NCNN
 #include "whisper/whisper_processor.h"
 
 #define TAG "ElderCareAI-Native"
@@ -12,153 +12,48 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // 全局对象
-static PaddleOCR* g_paddle_ocr = nullptr;
-static YoloDetector* g_yolo_detector = nullptr;
+// static PaddleOCR* g_paddle_ocr = nullptr;  // 暂时不需要
+// static YoloDetector* g_yolo_detector = nullptr;  // 暂时不需要
 static WhisperProcessor* g_whisper_processor = nullptr;
 
 extern "C" {
 
+// OCR和YOLO模块暂时注释，需要OpenCV等依赖
+// 等实现时再取消注释
+
+/*
 // 初始化OCR模块
 JNIEXPORT jboolean JNICALL
 Java_com_eldercare_ai_ocr_PaddleOCRProcessor_nativeInit(JNIEnv *env, jobject thiz,
                                                         jstring model_dir) {
-    const char* model_dir_cstr = env->GetStringUTFChars(model_dir, nullptr);
-    
-    try {
-        if (g_paddle_ocr == nullptr) {
-            g_paddle_ocr = new PaddleOCR();
-        }
-        
-        bool result = g_paddle_ocr->init(model_dir_cstr);
-        env->ReleaseStringUTFChars(model_dir, model_dir_cstr);
-        
-        LOGI("PaddleOCR init result: %s", result ? "success" : "failed");
-        return result;
-    } catch (const std::exception& e) {
-        LOGE("PaddleOCR init error: %s", e.what());
-        env->ReleaseStringUTFChars(model_dir, model_dir_cstr);
-        return false;
-    }
+    // 暂时注释
+    return false;
 }
 
 // OCR识别
 JNIEXPORT jobjectArray JNICALL
 Java_com_eldercare_ai_ocr_PaddleOCRProcessor_nativeDetectText(JNIEnv *env, jobject thiz,
                                                              jobject bitmap) {
-    if (g_paddle_ocr == nullptr) {
-        LOGE("PaddleOCR not initialized");
-        return nullptr;
-    }
-    
-    try {
-        // 将Android Bitmap转换为OpenCV Mat
-        AndroidBitmapInfo info;
-        void* pixels;
-        
-        if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
-            LOGE("Failed to get bitmap info");
-            return nullptr;
-        }
-        
-        if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
-            LOGE("Failed to lock bitmap pixels");
-            return nullptr;
-        }
-        
-        // 执行OCR识别
-        std::vector<OCRResult> results = g_paddle_ocr->detect(pixels, info.width, info.height);
-        
-        AndroidBitmap_unlockPixels(env, bitmap);
-        
-        // 将结果转换为Java数组
-        jclass string_class = env->FindClass("java/lang/String");
-        jobjectArray result_array = env->NewObjectArray(results.size(), string_class, nullptr);
-        
-        for (size_t i = 0; i < results.size(); i++) {
-            jstring text = env->NewStringUTF(results[i].text.c_str());
-            env->SetObjectArrayElement(result_array, i, text);
-            env->DeleteLocalRef(text);
-        }
-        
-        LOGI("OCR detected %zu text regions", results.size());
-        return result_array;
-        
-    } catch (const std::exception& e) {
-        LOGE("OCR detection error: %s", e.what());
-        return nullptr;
-    }
+    // 暂时注释
+    return nullptr;
 }
 
 // 初始化YOLO模块
 JNIEXPORT jboolean JNICALL
 Java_com_eldercare_ai_yolo_YoloDetector_nativeInit(JNIEnv *env, jobject thiz,
                                                    jstring model_path) {
-    const char* model_path_cstr = env->GetStringUTFChars(model_path, nullptr);
-    
-    try {
-        if (g_yolo_detector == nullptr) {
-            g_yolo_detector = new YoloDetector();
-        }
-        
-        bool result = g_yolo_detector->init(model_path_cstr);
-        env->ReleaseStringUTFChars(model_path, model_path_cstr);
-        
-        LOGI("YOLO init result: %s", result ? "success" : "failed");
-        return result;
-    } catch (const std::exception& e) {
-        LOGE("YOLO init error: %s", e.what());
-        env->ReleaseStringUTFChars(model_path, model_path_cstr);
-        return false;
-    }
+    // 暂时注释
+    return false;
 }
 
 // YOLO物体检测
 JNIEXPORT jobjectArray JNICALL
 Java_com_eldercare_ai_yolo_YoloDetector_nativeDetectObjects(JNIEnv *env, jobject thiz,
                                                            jobject bitmap) {
-    if (g_yolo_detector == nullptr) {
-        LOGE("YOLO detector not initialized");
-        return nullptr;
-    }
-    
-    try {
-        // 将Android Bitmap转换为检测输入
-        AndroidBitmapInfo info;
-        void* pixels;
-        
-        if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
-            LOGE("Failed to get bitmap info");
-            return nullptr;
-        }
-        
-        if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
-            LOGE("Failed to lock bitmap pixels");
-            return nullptr;
-        }
-        
-        // 执行物体检测
-        std::vector<DetectionResult> results = g_yolo_detector->detect(pixels, info.width, info.height);
-        
-        AndroidBitmap_unlockPixels(env, bitmap);
-        
-        // 将结果转换为Java数组
-        jclass string_class = env->FindClass("java/lang/String");
-        jobjectArray result_array = env->NewObjectArray(results.size(), string_class, nullptr);
-        
-        for (size_t i = 0; i < results.size(); i++) {
-            jstring object_name = env->NewStringUTF(results[i].class_name.c_str());
-            env->SetObjectArrayElement(result_array, i, object_name);
-            env->DeleteLocalRef(object_name);
-        }
-        
-        LOGI("YOLO detected %zu objects", results.size());
-        return result_array;
-        
-    } catch (const std::exception& e) {
-        LOGE("YOLO detection error: %s", e.what());
-        return nullptr;
-    }
+    // 暂时注释
+    return nullptr;
 }
+*/
 
 // 初始化Whisper模块
 JNIEXPORT jboolean JNICALL
@@ -210,20 +105,31 @@ Java_com_eldercare_ai_whisper_WhisperProcessor_nativeTranscribe(JNIEnv *env, job
     }
 }
 
+// 释放Whisper资源
+JNIEXPORT void JNICALL
+Java_com_eldercare_ai_whisper_WhisperProcessor_nativeRelease(JNIEnv *env, jobject thiz) {
+    LOGI("Releasing Whisper processor");
+    
+    if (g_whisper_processor != nullptr) {
+        g_whisper_processor->release();
+        // 注意：这里不删除g_whisper_processor，因为它是全局单例
+    }
+}
+
 // 清理资源
 JNIEXPORT void JNICALL
 Java_com_eldercare_ai_MainActivity_nativeCleanup(JNIEnv *env, jobject thiz) {
     LOGI("Cleaning up native resources");
     
-    if (g_paddle_ocr != nullptr) {
-        delete g_paddle_ocr;
-        g_paddle_ocr = nullptr;
-    }
+    // if (g_paddle_ocr != nullptr) {  // 暂时注释
+    //     delete g_paddle_ocr;
+    //     g_paddle_ocr = nullptr;
+    // }
     
-    if (g_yolo_detector != nullptr) {
-        delete g_yolo_detector;
-        g_yolo_detector = nullptr;
-    }
+    // if (g_yolo_detector != nullptr) {  // 暂时注释
+    //     delete g_yolo_detector;
+    //     g_yolo_detector = nullptr;
+    // }
     
     if (g_whisper_processor != nullptr) {
         delete g_whisper_processor;

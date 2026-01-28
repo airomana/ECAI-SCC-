@@ -5,6 +5,11 @@
 #include <string>
 #include <vector>
 
+// 如果whisper.cpp已集成，使用其头文件
+#ifdef WHISPER_CPP_AVAILABLE
+#include "whisper.h"
+#endif
+
 class WhisperProcessor {
 public:
     WhisperProcessor();
@@ -24,7 +29,7 @@ public:
     
 private:
     bool initialized_;
-    void* whisper_ctx_;  // Whisper上下文指针
+    void* whisper_ctx_;  // Whisper上下文指针（实际类型为struct whisper_context*，使用void*避免依赖whisper.h）
     
     // 音频预处理
     bool preprocessAudio(const float* src, int length, float** dst, int* dst_length);
