@@ -13,5 +13,13 @@ import com.eldercare.ai.data.ElderCareDatabase
 fun rememberElderCareDatabase(): ElderCareDatabase {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    return remember { ElderCareDatabase.getDatabase(context.applicationContext, scope) }
+    return remember {
+        try {
+            android.util.Log.d("ElderCareDatabaseProvider", "Getting database instance...")
+            ElderCareDatabase.getDatabase(context.applicationContext, scope)
+        } catch (e: Exception) {
+            android.util.Log.e("ElderCareDatabaseProvider", "Error getting database", e)
+            throw e
+        }
+    }
 }

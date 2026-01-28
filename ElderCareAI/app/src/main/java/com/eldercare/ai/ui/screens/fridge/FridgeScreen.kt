@@ -13,7 +13,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import android.net.Uri
+import android.os.Build
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.InputStream
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.ui.theme.ElderCareAITheme
@@ -27,12 +39,126 @@ import java.util.*
 fun FridgeScreen(
     onNavigateBack: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var isScanning by remember { mutableStateOf(false) }
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
     val fridgeItems by db.fridgeItemDao().getAll()
         .map { list -> list.map { it.toFridgeItem() } }
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    
+    // 选择图片（Android 13+ 使用 PickVisualMedia）
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isScanning = true
+            scope.launch {
+                try {
+                    val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+                    
+                    if (bitmap != null) {
+                        // TODO: 处理图片识别冰箱食材
+                        delay(2000) // 模拟识别过程
+                    } else {
+                        // 错误处理
+                    }
+                } catch (e: Exception) {
+                    // 错误处理
+                } finally {
+                    isScanning = false
+                }
+            }
+        }
+    }
+    
+    // 选择图片（兼容旧版本，使用 GetContent）
+    val pickImageLegacyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isScanning = true
+            scope.launch {
+                try {
+                    val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+                    
+                    if (bitmap != null) {
+                        // TODO: 处理图片识别冰箱食材
+                        delay(2000) // 模拟识别过程
+                    } else {
+                        // 错误处理
+                    }
+                } catch (e: Exception) {
+                    // 错误处理
+                } finally {
+                    isScanning = false
+                }
+            }
+        }
+    }
+    
+    // 读取媒体图片权限请求（Android 13+）
+    val readMediaImagesPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 权限授予后，选择图片
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pickImageLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            } else {
+                pickImageLegacyLauncher.launch("image/*")
+            }
+        }
+    }
+    
+    // 读取外部存储权限请求（Android 12 及以下）
+    val readStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 权限授予后，选择图片
+            pickImageLegacyLauncher.launch("image/*")
+        }
+    }
+    
+    // 选择图片的辅助函数
+    fun selectImageFromGallery() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ 使用 READ_MEDIA_IMAGES 权限
+            when {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_MEDIA_IMAGES
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    pickImageLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
+                else -> {
+                    readMediaImagesPermissionLauncher.launch(Manifest.permission.READ_MEDIA_IMAGES)
+                }
+            }
+        } else {
+            // Android 12 及以下使用 READ_EXTERNAL_STORAGE 权限
+            when {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    pickImageLegacyLauncher.launch("image/*")
+                }
+                else -> {
+                    readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+            }
+        }
+    }
     
     Column(
         modifier = Modifier
@@ -67,56 +193,99 @@ fun FridgeScreen(
         
         Spacer(modifier = Modifier.height(32.dp))
         
-        // 拍照按钮
-        Card(
-            onClick = { 
-                isScanning = true
-                scope.launch {
-                    delay(2000)
-                    isScanning = false
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondary
-            ),
-            shape = RoundedCornerShape(20.dp)
+        // 拍照和选择图片按钮
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Row(
+            // 拍照按钮
+            Card(
+                onClick = { 
+                    isScanning = true
+                    scope.launch {
+                        delay(2000)
+                        isScanning = false
+                    }
+                },
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    .weight(1f)
+                    .height(120.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                ),
+                shape = RoundedCornerShape(20.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = "拍冰箱",
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.onSecondary
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = "拍冰箱",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (isScanning) "识别中..." else "拍照",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSecondary
+                    )
+                }
+            }
+            
+            // 选择图片按钮
+            Card(
+                onClick = { selectImageFromGallery() },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(120.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                ),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoLibrary,
+                        contentDescription = "选择图片",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onTertiary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "相册",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onTertiary
+                    )
+                }
+            }
+        }
+        
+        if (isScanning) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(32.dp)
                 )
-                
-                Column {
-                    Text(
-                        text = if (isScanning) "正在识别..." else "拍冰箱",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = MaterialTheme.colorScheme.onSecondary
-                    )
-                    Text(
-                        text = if (isScanning) "请稍等" else "看看有什么食材",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f)
-                    )
-                }
-                
-                if (isScanning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(32.dp),
-                        color = MaterialTheme.colorScheme.onSecondary
-                    )
-                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = "正在识别食材...",
+                    style = MaterialTheme.typography.bodyLarge
+                )
             }
         }
         

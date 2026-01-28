@@ -37,11 +37,16 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import kotlin.math.max
 import kotlin.math.min
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import android.net.Uri
+import android.os.Build
+import androidx.compose.ui.platform.LocalContext
+import java.io.InputStream
 import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.Dish
@@ -363,6 +368,121 @@ fun MenuScanScreen(
         }
     }
     
+    // 选择图片（Android 13+ 使用 PickVisualMedia）
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                
+                if (bitmap != null) {
+                    capturedBitmap = bitmap
+                    showCropDialog = true
+                    errorMessage = null
+                    recognizedText = null
+                    scanResults = emptyList()
+                } else {
+                    errorMessage = "无法读取图片"
+                }
+            } catch (e: Exception) {
+                errorMessage = "读取图片失败：${e.message}"
+            }
+        }
+    }
+    
+    // 选择图片（兼容旧版本，使用 GetContent）
+    val pickImageLegacyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                
+                if (bitmap != null) {
+                    capturedBitmap = bitmap
+                    showCropDialog = true
+                    errorMessage = null
+                    recognizedText = null
+                    scanResults = emptyList()
+                } else {
+                    errorMessage = "无法读取图片"
+                }
+            } catch (e: Exception) {
+                errorMessage = "读取图片失败：${e.message}"
+            }
+        }
+    }
+    
+    // 读取媒体图片权限请求（Android 13+）
+    val readMediaImagesPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 权限授予后，选择图片
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pickImageLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            } else {
+                pickImageLegacyLauncher.launch("image/*")
+            }
+        } else {
+            errorMessage = "需要读取图片权限，请在设置中授予权限"
+            ttsService.speak("需要读取图片权限才能使用此功能")
+        }
+    }
+    
+    // 读取外部存储权限请求（Android 12 及以下）
+    val readStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 权限授予后，选择图片
+            pickImageLegacyLauncher.launch("image/*")
+        } else {
+            errorMessage = "需要读取图片权限，请在设置中授予权限"
+            ttsService.speak("需要读取图片权限才能使用此功能")
+        }
+    }
+    
+    // 选择图片的辅助函数
+    fun selectImageFromGallery() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ 使用 READ_MEDIA_IMAGES 权限
+            when {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_MEDIA_IMAGES
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    pickImageLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
+                else -> {
+                    readMediaImagesPermissionLauncher.launch(Manifest.permission.READ_MEDIA_IMAGES)
+                }
+            }
+        } else {
+            // Android 12 及以下使用 READ_EXTERNAL_STORAGE 权限
+            when {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    pickImageLegacyLauncher.launch("image/*")
+                }
+                else -> {
+                    readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+            }
+        }
+    }
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -436,6 +556,9 @@ fun MenuScanScreen(
                             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                         }
                     }
+                },
+                onSelectFromGallery = {
+                    selectImageFromGallery()
                 }
             )
         } else {
@@ -467,7 +590,8 @@ fun MenuScanScreen(
 fun CameraSection(
     isScanning: Boolean,
     capturedBitmap: Bitmap?,
-    onStartScan: () -> Unit
+    onStartScan: () -> Unit,
+    onSelectFromGallery: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -533,22 +657,47 @@ fun CameraSection(
         
         Spacer(modifier = Modifier.height(48.dp))
         
-        // 拍照按钮
+        // 拍照和选择图片按钮
         if (!isScanning) {
-            Button(
-                onClick = onStartScan,
-                modifier = Modifier
-                    .size(120.dp),
-                shape = RoundedCornerShape(60.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = "拍照",
-                    modifier = Modifier.size(48.dp)
-                )
+                // 拍照按钮
+                Button(
+                    onClick = onStartScan,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = "拍照",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("拍照")
+                }
+                
+                // 选择图片按钮
+                OutlinedButton(
+                    onClick = onSelectFromGallery,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoLibrary,
+                        contentDescription = "选择图片",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("相册")
+                }
             }
         }
         
@@ -556,7 +705,7 @@ fun CameraSection(
         
         // 提示文字
         Text(
-            text = if (isScanning) "请稍等，正在分析菜单..." else "请将菜单放在相机前，点击拍照按钮",
+            text = if (isScanning) "请稍等，正在分析菜单..." else "请将菜单放在相机前拍照，或从相册选择图片",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant

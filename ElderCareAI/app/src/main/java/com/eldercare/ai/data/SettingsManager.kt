@@ -27,11 +27,14 @@ class SettingsManager(context: Context) {
         private const val KEY_LLM_ENABLED = "llm_enabled"
         private const val KEY_LLM_API_KEY = "llm_api_key"
         private const val KEY_LLM_MODEL = "llm_model"
+        private const val KEY_USER_ROLE = "user_role"  // "parent" 或 "child"
+        private const val KEY_CURRENT_USER_ID = "current_user_id"  // 当前登录用户ID
         
         private const val DEFAULT_TTS_ENABLED = true
         private const val DEFAULT_VIBRATION_ENABLED = true
         private const val DEFAULT_FONT_SIZE = 2f
         private const val DEFAULT_LLM_ENABLED = true
+        private const val DEFAULT_USER_ROLE = "parent"  // 默认为父母端
     }
     
     var ttsEnabled: Boolean
@@ -69,5 +72,45 @@ class SettingsManager(context: Context) {
     
     fun setLlmModel(model: String) {
         prefs.edit().putString(KEY_LLM_MODEL, model).apply()
+    }
+    
+    // 用户角色管理
+    fun getUserRole(): String {
+        return prefs.getString(KEY_USER_ROLE, DEFAULT_USER_ROLE) ?: DEFAULT_USER_ROLE
+    }
+    
+    fun setUserRole(role: String) {
+        prefs.edit().putString(KEY_USER_ROLE, role).apply()
+    }
+    
+    fun isParentRole(): Boolean {
+        return getUserRole() == "parent"
+    }
+    
+    fun isChildRole(): Boolean {
+        return getUserRole() == "child"
+    }
+    
+    // 当前登录用户ID
+    fun getCurrentUserId(): Long? {
+        val userId = prefs.getLong(KEY_CURRENT_USER_ID, -1L)
+        return if (userId == -1L) null else userId
+    }
+    
+    fun setCurrentUserId(userId: Long?) {
+        if (userId == null) {
+            prefs.edit().remove(KEY_CURRENT_USER_ID).apply()
+        } else {
+            prefs.edit().putLong(KEY_CURRENT_USER_ID, userId).apply()
+        }
+    }
+    
+    fun isLoggedIn(): Boolean {
+        return getCurrentUserId() != null
+    }
+    
+    fun logout() {
+        setCurrentUserId(null)
+        setUserRole(DEFAULT_USER_ROLE)
     }
 }
