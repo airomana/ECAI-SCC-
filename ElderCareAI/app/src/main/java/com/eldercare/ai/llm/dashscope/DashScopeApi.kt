@@ -18,11 +18,25 @@ interface DashScopeApi {
      * @param request 请求体
      * @return 响应结果
      */
-    @POST("generation")
+    @POST("text-generation/generation")
     suspend fun generateText(
         @Header("Authorization") authorization: String,
         @Header("Content-Type") contentType: String = "application/json",
         @Body request: DashScopeRequest
+    ): Response<DashScopeResponse>
+
+    /**
+     * 多模态生成接口
+     * 
+     * @param authorization API密钥，格式：Bearer {API_KEY}
+     * @param request 请求体
+     * @return 响应结果
+     */
+    @POST("multimodal-generation/generation")
+    suspend fun generateMultimodal(
+        @Header("Authorization") authorization: String,
+        @Header("Content-Type") contentType: String = "application/json",
+        @Body request: DashScopeMultimodalRequest
     ): Response<DashScopeResponse>
 }
 
@@ -35,13 +49,31 @@ data class DashScopeRequest(
     val parameters: DashScopeParameters? = null
 )
 
+/**
+ * 多模态请求体
+ */
+data class DashScopeMultimodalRequest(
+    val model: String,  // 如 "qwen-vl-plus"
+    val input: DashScopeMultimodalInput,
+    val parameters: DashScopeParameters? = null
+)
+
+data class DashScopeMultimodalInput(
+    val messages: List<DashScopeMultimodalMessage>
+)
+
+data class DashScopeMultimodalMessage(
+    val role: String,
+    val content: List<Map<String, String>>
+)
+
 data class DashScopeInput(
     val messages: List<DashScopeMessage>
 )
 
 data class DashScopeMessage(
     val role: String,  // "system", "user", "assistant"
-    val content: String
+    val content: Any // 可能为 String 或 List<Map<String, String>>
 )
 
 data class DashScopeParameters(
@@ -62,6 +94,7 @@ data class DashScopeResponse(
 
 data class DashScopeOutput(
     val choices: List<DashScopeChoice>?,
+    val text: String?, // qwen-vl 有时直接返回 text 字段
     val finish_reason: String?
 )
 

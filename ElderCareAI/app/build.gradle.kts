@@ -101,9 +101,9 @@ android {
         }
     }
     
-    // 防止.bin文件被压缩
+    // 防止.bin、PaddleOCR 模型文件被压缩
     androidResources {
-        noCompress += listOf("bin", "param")
+        noCompress += listOf("bin", "param", "pdmodel", "pdiparams")
     }
     
     // 启用原生代码编译配置（Whisper语音识别）
@@ -150,15 +150,17 @@ dependencies {
     // Gson for JSON serialization
     implementation(libs.gson)
 
-    // ML Kit OCR（端侧文字识别）
-    implementation(libs.mlkit.text.recognition)
-    implementation(libs.mlkit.text.recognition.chinese)
+    // PaddleOCR（端侧文字识别，基于 equationl/paddleocr4android FastDeploy）
+    implementation("com.github.equationl.paddleocr4android:fastdeplyocr:v1.2.9")
     
     // Retrofit & OkHttp (for LLM API)
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
+
+    // Google Gemini SDK
+    implementation("com.google.ai.client.generativeai:generativeai:0.2.0")
     
     // Testing
     testImplementation(libs.junit)
