@@ -159,9 +159,6 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
 
-    // Google Gemini SDK
-    implementation("com.google.ai.client.generativeai:generativeai:0.2.0")
-    
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

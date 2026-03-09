@@ -106,10 +106,4 @@ object LlmConfig {
     fun isConfigured(): Boolean {
         return API_KEY.isNotBlank() && API_ENDPOINT.isNotBlank() && MODEL.isNotBlank()
     }
-    
-    /**
-     * Gemini API 密钥
-     * TODO: 请替换为实际的 Gemini API 密钥，或者从配置中读取
-     */
-    val GEMINI_API_KEY: String = "YOUR_GEMINI_API_KEY"
 }
