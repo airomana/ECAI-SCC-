@@ -1,5 +1,8 @@
 package com.eldercare.ai.fridge
 
+import android.content.Context
+import android.util.Log
+import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 
@@ -448,4 +451,397 @@ enum class FoodStatus {
     FRESH,          // 新鲜
     EXPIRING_SOON,  // 即将过期
     EXPIRED         // 已过期
+}
+
+class FridgeFoodRag(private val context: Context) {
+
+    data class Rule(
+        val ruleId: String,
+        val foodNameStd: String,
+        val aliases: String,
+        val category: String,
+        val keywords: String,
+        val storage: String,
+        val tempRangeC: String,
+        val packState: String,
+        val foodForm: String,
+        val container: String,
+        val processLevel: String,
+        val notesApply: String,
+        val shelfLifeMinDays: Int?,
+        val shelfLifeMaxDays: Int?,
+        val bucketCandidates: String,
+        val defaultBucket: Int?,
+        val expireWhen: String,
+        val riskLevel: String,
+        val spoilSigns: String,
+        val mustDiscardIf: String,
+        val adviceTemplate: String,
+        val safeFallbackAdvice: String,
+        val specialGroups: String,
+        val version: String
+    )
+
+    private val rules: List<Rule> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        loadRulesFromAssets()
+    }
+
+    fun enrichFoods(
+        foods: List<DetectedFood>,
+        storage: String = "冷藏"
+    ): List<DetectedFood> {
+        if (foods.isEmpty()) return emptyList()
+        return foods.map { enrichFood(it, storage) }
+    }
+
+    fun getAdviceText(
+        foodName: String,
+        category: String,
+        expiryTime: Long,
+        currentTime: Long = System.currentTimeMillis(),
+        storage: String = "冷藏"
+    ): String {
+        val status = ShelfLifeCalculator.calculateFoodStatus(expiryTime, currentTime)
+        val rule = findBestRule(
+            foodName = foodName,
+            category = category,
+            storage = storage,
+            packState = inferPackState(foodName),
+            foodForm = inferFoodForm(foodName),
+            processLevel = inferProcessLevel(foodName)
+        )
+
+        val ruleAdvice = when (status) {
+            FoodStatus.EXPIRED -> {
+                val core = rule?.mustDiscardIf?.takeUnless { it.isBlank() }
+                if (core != null) "已经过期了，别吃。$core" else "已经过期了，别吃"
+            }
+            FoodStatus.EXPIRING_SOON -> {
+                rule?.adviceTemplate?.takeUnless { it.isBlank() }
+                    ?: rule?.safeFallbackAdvice?.takeUnless { it.isBlank() }
+            }
+            FoodStatus.FRESH -> {
+                rule?.notesApply?.takeUnless { it.isBlank() }
+                    ?: rule?.adviceTemplate?.takeUnless { it.isBlank() }
+                    ?: rule?.safeFallbackAdvice?.takeUnless { it.isBlank() }
+            }
+        }
+
+        return ruleAdvice ?: ShelfLifeCalculator.getAdviceText(foodName, category, expiryTime, currentTime)
+    }
+
+    private fun enrichFood(food: DetectedFood, storage: String): DetectedFood {
+        val freshness = food.freshness?.trim().orEmpty()
+        if (freshness == "疑似变质") {
+            val advice = food.advice?.takeUnless { it.isBlank() } ?: "疑似变质，别吃，直接扔掉"
+            return food.copy(daysLeft = 0, advice = advice)
+        }
+        if (freshness == "快坏") {
+            val advice = food.advice?.takeUnless { it.isBlank() } ?: "看着快坏了，今天吃不完就别吃了"
+            return food.copy(daysLeft = 0, advice = advice)
+        }
+
+        val confidence = food.confidence
+        val clarity = food.clarity?.trim().orEmpty()
+        val uncertain = clarity == "看不清" || confidence < 0.5f || freshness == "未知"
+
+        val rule = findBestRule(
+            foodName = food.name,
+            category = food.category,
+            storage = storage,
+            packState = inferPackState(food.name),
+            foodForm = inferFoodForm(food.name),
+            processLevel = inferProcessLevel(food.name)
+        )
+
+        if (rule == null) {
+            Log.d("FridgeFoodRag", "no_rule food=${food.name} cat=${food.category} storage=$storage clarity=$clarity conf=$confidence freshness=$freshness")
+            if (uncertain) {
+                return food.copy(daysLeft = null, advice = food.advice ?: "看不清或不确定，建议闻味道，不确定就别吃")
+            }
+            return food
+        }
+
+        if (uncertain) {
+            val advice = rule.safeFallbackAdvice.takeUnless { it.isBlank() } ?: food.advice ?: "看不清或不确定，建议闻味道，不确定就别吃"
+            Log.d("FridgeFoodRag", "rule_match_uncertain food=${food.name} rule=${rule.ruleId} storage=$storage pack=${inferPackState(food.name)} form=${inferFoodForm(food.name)} process=${inferProcessLevel(food.name)}")
+            return food.copy(daysLeft = null, advice = advice)
+        }
+
+        val chosenDays = chooseDaysLeft(
+            modelDaysLeft = food.daysLeft,
+            rule = rule
+        )
+
+        val advice = rule.adviceTemplate.takeUnless { it.isBlank() }
+            ?: rule.safeFallbackAdvice.takeUnless { it.isBlank() }
+            ?: food.advice
+
+        Log.d("FridgeFoodRag", "rule_match food=${food.name} rule=${rule.ruleId} chosenDays=$chosenDays storage=$storage pack=${inferPackState(food.name)} form=${inferFoodForm(food.name)} process=${inferProcessLevel(food.name)}")
+        return food.copy(
+            daysLeft = chosenDays,
+            advice = advice
+        )
+    }
+
+    private fun chooseDaysLeft(modelDaysLeft: Int?, rule: Rule): Int? {
+        val candidates = parseBucketCandidates(rule.bucketCandidates)
+        val defaultBucket = rule.defaultBucket?.let { bucketDownToCandidates(it, candidates) }
+        val maxDays = rule.shelfLifeMaxDays?.let { bucketDownToCandidates(it, candidates) }
+
+        val base = when {
+            defaultBucket != null -> defaultBucket
+            maxDays != null -> maxDays
+            else -> null
+        }
+
+        val model = modelDaysLeft?.let { bucketDownToCandidates(it, candidates) }
+        val merged = when {
+            base == null -> model
+            model == null -> base
+            else -> minOf(base, model)
+        }
+
+        if (merged == null) return null
+        if (maxDays != null) return minOf(merged, maxDays)
+        return merged
+    }
+
+    private fun findBestRule(
+        foodName: String,
+        category: String,
+        storage: String,
+        packState: String,
+        foodForm: String,
+        processLevel: String
+    ): Rule? {
+        val nameKey = normalizeKey(foodName)
+        val categoryKey = normalizeKey(category)
+        val storageKey = normalizeKey(storage)
+        val packKey = normalizeKey(packState)
+        val formKey = normalizeKey(foodForm)
+        val processKey = normalizeKey(processLevel)
+
+        var best: Rule? = null
+        var bestScore = Int.MIN_VALUE
+
+        for (r in rules) {
+            if (normalizeKey(r.storage) != storageKey) continue
+
+            val score = scoreRule(
+                r = r,
+                nameKey = nameKey,
+                categoryKey = categoryKey,
+                packKey = packKey,
+                formKey = formKey,
+                processKey = processKey,
+                originalName = foodName
+            )
+
+            if (score > bestScore) {
+                bestScore = score
+                best = r
+            } else if (score == bestScore && best != null) {
+                val bestDays = best.defaultBucket ?: best.shelfLifeMaxDays ?: Int.MAX_VALUE
+                val currDays = r.defaultBucket ?: r.shelfLifeMaxDays ?: Int.MAX_VALUE
+                if (currDays < bestDays) best = r
+            }
+        }
+
+        return best?.takeIf { bestScore >= 600 }
+    }
+
+    private fun scoreRule(
+        r: Rule,
+        nameKey: String,
+        categoryKey: String,
+        packKey: String,
+        formKey: String,
+        processKey: String,
+        originalName: String
+    ): Int {
+        var score = 0
+
+        val stdKey = normalizeKey(r.foodNameStd)
+        if (stdKey.isNotBlank() && stdKey == nameKey) score += 1200
+        if (stdKey.isNotBlank() && (nameKey.contains(stdKey) || stdKey.contains(nameKey))) score += 700
+
+        val aliasKeys = splitTokens(r.aliases)
+        if (aliasKeys.any { it == nameKey }) score += 1100
+        if (aliasKeys.any { it.isNotBlank() && nameKey.contains(it) }) score += 800
+
+        val ruleCat = normalizeKey(r.category)
+        if (ruleCat == categoryKey) score += 150
+        if (ruleCat == normalizeKey("熟食") && (formKey == normalizeKey("熟") || processKey == normalizeKey("熟") || originalName.contains("剩菜") || originalName.contains("熟"))) score += 120
+
+        val rulePack = normalizeKey(r.packState)
+        if (rulePack.isNotBlank() && rulePack == packKey) score += 80
+        if (rulePack.isNotBlank() && packKey.isBlank()) score += 20
+
+        val ruleForm = normalizeKey(r.foodForm)
+        if (ruleForm.isNotBlank() && ruleForm == formKey) score += 60
+        if (ruleForm.isNotBlank() && formKey.isNotBlank() && ruleForm.contains(formKey)) score += 30
+
+        val ruleProcess = normalizeKey(r.processLevel)
+        if (ruleProcess.isNotBlank() && ruleProcess == processKey) score += 40
+
+        val keywordTokens = splitTokens(r.keywords)
+        for (k in keywordTokens) {
+            if (k.isNotBlank() && originalName.contains(k)) score += 10
+        }
+
+        return score
+    }
+
+    private fun loadRulesFromAssets(): List<Rule> {
+        val input = context.assets.open("fridge_food_data.csv")
+        input.use { stream ->
+            val bytes = stream.readBytes()
+            val charset = chooseCharset(bytes)
+            val text = bytes.toString(charset)
+            val lines = text.split("\n")
+            if (lines.isEmpty()) return emptyList()
+
+            val header = splitCsvLine(lines.first().trimEnd('\r')).map { it.removePrefix("\uFEFF") }
+            val index = header.withIndex().associate { it.value to it.index }
+
+            val result = ArrayList<Rule>(lines.size)
+            for (i in 1 until lines.size) {
+                val rawLine = lines[i].trimEnd('\r')
+                if (rawLine.isBlank()) continue
+                val cols = splitCsvLine(rawLine)
+                fun get(name: String): String {
+                    val idx = index[name] ?: return ""
+                    return cols.getOrNull(idx)?.trim().orEmpty()
+                }
+
+                val rule = Rule(
+                    ruleId = get("rule_id"),
+                    foodNameStd = get("food_name_std"),
+                    aliases = get("aliases"),
+                    category = get("category"),
+                    keywords = get("keywords"),
+                    storage = get("storage"),
+                    tempRangeC = get("temp_range_c"),
+                    packState = get("pack_state"),
+                    foodForm = get("food_form"),
+                    container = get("container"),
+                    processLevel = get("process_level"),
+                    notesApply = get("notes_apply"),
+                    shelfLifeMinDays = get("shelf_life_min_days").toIntOrNull(),
+                    shelfLifeMaxDays = get("shelf_life_max_days").toIntOrNull(),
+                    bucketCandidates = get("bucket_candidates"),
+                    defaultBucket = get("default_bucket").toIntOrNull(),
+                    expireWhen = get("expire_when"),
+                    riskLevel = get("risk_level"),
+                    spoilSigns = get("spoil_signs"),
+                    mustDiscardIf = get("must_discard_if"),
+                    adviceTemplate = get("advice_template"),
+                    safeFallbackAdvice = get("safe_fallback_advice"),
+                    specialGroups = get("special_groups"),
+                    version = get("version")
+                )
+                if (rule.ruleId.isNotBlank() && rule.foodNameStd.isNotBlank()) {
+                    result.add(rule)
+                }
+            }
+            Log.d("FridgeFoodRag", "loaded_rules count=${result.size} charset=${charset.name()} header=${header.size}")
+            return result
+        }
+    }
+
+    private fun chooseCharset(bytes: ByteArray): Charset {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return Charsets.UTF_8
+        }
+        val utf8Text = try {
+            bytes.toString(Charsets.UTF_8)
+        } catch (e: Exception) {
+            ""
+        }
+        if (utf8Text.isNotBlank() && !utf8Text.contains('\uFFFD')) {
+            return Charsets.UTF_8
+        }
+
+        return try {
+            Charset.forName("GBK")
+        } catch (e: Exception) {
+            Charsets.UTF_8
+        }
+    }
+
+    private fun splitCsvLine(line: String): List<String> {
+        val out = ArrayList<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            if (ch == '"') {
+                if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+                    sb.append('"')
+                    i += 1
+                } else {
+                    inQuotes = !inQuotes
+                }
+            } else if (ch == ',' && !inQuotes) {
+                out.add(sb.toString())
+                sb.setLength(0)
+            } else {
+                sb.append(ch)
+            }
+            i += 1
+        }
+        out.add(sb.toString())
+        return out
+    }
+
+    private fun splitTokens(raw: String): List<String> {
+        if (raw.isBlank()) return emptyList()
+        return raw.split("|").map { normalizeKey(it) }.filter { it.isNotBlank() }.distinct()
+    }
+
+    private fun parseBucketCandidates(raw: String): IntArray {
+        val parsed = raw.split("|").mapNotNull { it.trim().toIntOrNull() }.distinct().sorted()
+        if (parsed.isEmpty()) return intArrayOf(0, 1, 2, 3, 5, 7, 14)
+        return parsed.toIntArray()
+    }
+
+    private fun bucketDownToCandidates(value: Int, candidates: IntArray): Int {
+        val v = value.coerceIn(0, 365)
+        var chosen = candidates.firstOrNull() ?: 0
+        for (c in candidates) {
+            if (c <= v) chosen = c else break
+        }
+        return chosen
+    }
+
+    private fun normalizeKey(raw: String): String {
+        return raw.trim().replace(Regex("\\s+"), "").lowercase()
+    }
+
+    private fun inferPackState(name: String): String {
+        val openedKeywords = listOf("开封", "拆封", "已开", "打开", "开口", "开了", "开盖")
+        if (openedKeywords.any { name.contains(it) }) return "开封"
+        return "未开封"
+    }
+
+    private fun inferFoodForm(name: String): String {
+        val cookedKeywords = listOf("熟食", "剩菜", "剩饭", "凉拌", "拌", "炒", "煮", "炖", "卤", "烤", "炸", "蒸", "焖", "煎", "烩", "汤")
+        if (cookedKeywords.any { name.contains(it) }) return "熟"
+
+        val cutKeywords = listOf("切开", "切片", "切块", "切丝", "切段", "切好", "剁碎", "去皮", "削皮", "切")
+        if (cutKeywords.any { name.contains(it) }) return "切"
+
+        val minceKeywords = listOf("绞肉", "肉馅", "剁肉", "碎肉")
+        if (minceKeywords.any { name.contains(it) }) return "绞肉"
+
+        return "整"
+    }
+
+    private fun inferProcessLevel(name: String): String {
+        val cookedKeywords = listOf("熟食", "剩菜", "剩饭", "凉拌", "拌", "炒", "煮", "炖", "卤", "烤", "炸", "蒸", "焖", "煎", "烩", "汤")
+        if (cookedKeywords.any { name.contains(it) }) return "熟"
+        return "生"
+    }
 }

@@ -29,6 +29,7 @@ class FridgeRepository(
 ) {
     
     private val foodDetector = FoodDetector(context)
+    private val rag = FridgeFoodRag(context)
     private val visionModelFast = "qwen-vl-plus"
     private val visionModelMax = "qwen-vl-max"
     
@@ -125,9 +126,11 @@ class FridgeRepository(
     private suspend fun detectFoodsWithModelLayering(bitmap: Bitmap, highAccuracy: Boolean): LayeredDetection {
         if (highAccuracy) {
             val max = foodDetector.detectFoods(bitmap, visionModelMax)
+            val foods = rag.enrichFoods(max.foods)
+            val unknownCount = foods.count { isUncertain(it) }
             return LayeredDetection(
-                foods = max.foods,
-                unknownCount = max.unknownCount,
+                foods = foods,
+                unknownCount = unknownCount,
                 modelUsed = max.modelUsed,
                 wasUpgraded = true
             )
@@ -136,9 +139,11 @@ class FridgeRepository(
         val fast = foodDetector.detectFoods(bitmap, visionModelFast)
         val needsUpgrade = fast.foods.isEmpty() || shouldUpgrade(fast)
         if (!needsUpgrade) {
+            val foods = rag.enrichFoods(fast.foods)
+            val unknownCount = foods.count { isUncertain(it) }
             return LayeredDetection(
-                foods = fast.foods,
-                unknownCount = fast.unknownCount,
+                foods = foods,
+                unknownCount = unknownCount,
                 modelUsed = fast.modelUsed,
                 wasUpgraded = false
             )
@@ -146,12 +151,24 @@ class FridgeRepository(
 
         val max = foodDetector.detectFoods(bitmap, visionModelMax)
         val chosen = chooseBetter(fast, max)
+        val foods = rag.enrichFoods(chosen.foods)
+        val unknownCount = foods.count { isUncertain(it) }
         return LayeredDetection(
-            foods = chosen.foods,
-            unknownCount = chosen.unknownCount,
+            foods = foods,
+            unknownCount = unknownCount,
             modelUsed = chosen.modelUsed,
             wasUpgraded = true
         )
+    }
+
+    private fun isUncertain(food: DetectedFood): Boolean {
+        val clarity = food.clarity?.trim().orEmpty()
+        if (clarity == "看不清") return true
+        if (food.confidence < 0.5f) return true
+        val freshness = food.freshness?.trim().orEmpty()
+        if (freshness == "未知") return true
+        if (food.daysLeft == null) return true
+        return false
     }
 
     private fun shouldUpgrade(result: FoodDetectionResult): Boolean {

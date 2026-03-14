@@ -113,6 +113,12 @@ android {
             version = "3.22.1"
         }
     }
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(file("../../documents"))
+        }
+    }
 }
 
 dependencies {
