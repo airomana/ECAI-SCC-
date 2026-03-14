@@ -153,7 +153,7 @@ private fun FridgeItemEntity.toUiModel(): FridgeItemUi {
     val currentTime = System.currentTimeMillis()
     val status = ShelfLifeCalculator.calculateFoodStatus(expiryAt, currentTime)
     val statusText = ShelfLifeCalculator.getStatusText(expiryAt, currentTime)
-    val adviceText = ShelfLifeCalculator.getAdviceText(expiryAt, currentTime)
+    val adviceText = ShelfLifeCalculator.getAdviceText(name, category, expiryAt, currentTime)
     val remainingDays = ShelfLifeCalculator.getRemainingDays(expiryAt, currentTime)
     
     return FridgeItemUi(
