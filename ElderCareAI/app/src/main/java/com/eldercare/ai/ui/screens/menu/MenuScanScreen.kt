@@ -54,7 +54,7 @@ import com.eldercare.ai.health.HealthRiskEvaluator
 import com.eldercare.ai.llm.LlmService
 import com.eldercare.ai.ocr.DishNameExtractor
 import com.eldercare.ai.ocr.DishKnowledgeMatcher
-import com.eldercare.ai.ocr.MlKitOcrProcessor
+import com.eldercare.ai.ocr.PaddleOcrProcessor
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.tts.TtsService
 import com.eldercare.ai.ui.theme.ElderCareAITheme
@@ -84,7 +84,7 @@ fun MenuScanScreen(
     val scope = rememberCoroutineScope()
     val db = rememberElderCareDatabase()
     val settingsManager = remember { SettingsManager.getInstance(context) }
-    val ocrProcessor = remember { MlKitOcrProcessor() }
+    val ocrProcessor = remember { PaddleOcrProcessor(context) }
     val riskEvaluator = remember { HealthRiskEvaluator() }
     val ttsService = remember { TtsService.getInstance(context) }
     val llmService = remember { LlmService.getInstance(context) }

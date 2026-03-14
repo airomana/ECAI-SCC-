@@ -15,6 +15,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,33 +27,97 @@ import android.os.Build
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.InputStream
-import com.eldercare.ai.rememberElderCareDatabase
-import com.eldercare.ai.data.entity.FridgeItemEntity
+import java.io.File
+import androidx.core.content.FileProvider
 import com.eldercare.ai.ui.theme.ElderCareAITheme
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.map
+import com.eldercare.ai.ui.viewmodel.FridgeViewModel
+import com.eldercare.ai.ui.viewmodel.ScanState
+import com.eldercare.ai.ui.viewmodel.FridgeItemUi
+import com.eldercare.ai.fridge.FoodStatus
 import kotlinx.coroutines.launch
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FridgeScreen(
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    viewModel: FridgeViewModel = viewModel()
 ) {
     val context = LocalContext.current
-    var isScanning by remember { mutableStateOf(false) }
-    val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
-    val fridgeItems by db.fridgeItemDao().getAll()
-        .map { list -> list.map { it.toFridgeItem() } }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
+    
+    // 拍照的临时 URI
+    var tempImageUri by remember { mutableStateOf<Uri?>(null) }
+    
+    val scanState by viewModel.scanState.collectAsStateWithLifecycle()
+    val fridgeItems by viewModel.fridgeItems.collectAsStateWithLifecycle()
+    
+    // 相机 Launcher
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && tempImageUri != null) {
+            scope.launch {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(tempImageUri!!)
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+                    if (bitmap != null) {
+                        viewModel.scanFridge(bitmap)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+    
+    // 相机权限请求
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 权限授予后，打开相机
+            try {
+                val file = File.createTempFile(
+                    "fridge_scan_${System.currentTimeMillis()}",
+                    ".jpg",
+                    context.cacheDir
+                )
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+                tempImageUri = uri
+                takePictureLauncher.launch(uri)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    // 显示扫描结果提示
+    LaunchedEffect(scanState) {
+        when (scanState) {
+            is ScanState.Success -> {
+                // 3秒后自动重置状态
+                kotlinx.coroutines.delay(3000)
+                viewModel.resetScanState()
+            }
+            is ScanState.Failed, is ScanState.Empty -> {
+                // 5秒后自动重置状态
+                kotlinx.coroutines.delay(5000)
+                viewModel.resetScanState()
+            }
+            else -> {}
+        }
+    }
     
     // 选择图片（Android 13+ 使用 PickVisualMedia）
     val pickImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            isScanning = true
             scope.launch {
                 try {
                     val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
@@ -60,15 +125,10 @@ fun FridgeScreen(
                     inputStream?.close()
                     
                     if (bitmap != null) {
-                        // TODO: 处理图片识别冰箱食材
-                        delay(2000) // 模拟识别过程
-                    } else {
-                        // 错误处理
+                        viewModel.scanFridge(bitmap)
                     }
                 } catch (e: Exception) {
                     // 错误处理
-                } finally {
-                    isScanning = false
                 }
             }
         }
@@ -79,7 +139,6 @@ fun FridgeScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            isScanning = true
             scope.launch {
                 try {
                     val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
@@ -87,15 +146,10 @@ fun FridgeScreen(
                     inputStream?.close()
                     
                     if (bitmap != null) {
-                        // TODO: 处理图片识别冰箱食材
-                        delay(2000) // 模拟识别过程
-                    } else {
-                        // 错误处理
+                        viewModel.scanFridge(bitmap)
                     }
                 } catch (e: Exception) {
                     // 错误处理
-                } finally {
-                    isScanning = false
                 }
             }
         }
@@ -201,10 +255,26 @@ fun FridgeScreen(
             // 拍照按钮
             Card(
                 onClick = { 
-                    isScanning = true
-                    scope.launch {
-                        delay(2000)
-                        isScanning = false
+                    val permission = Manifest.permission.CAMERA
+                    if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                        try {
+                            val file = File.createTempFile(
+                                "fridge_scan_${System.currentTimeMillis()}",
+                                ".jpg",
+                                context.cacheDir
+                            )
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            tempImageUri = uri
+                            takePictureLauncher.launch(uri)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        cameraPermissionLauncher.launch(permission)
                     }
                 },
                 modifier = Modifier
@@ -230,7 +300,7 @@ fun FridgeScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = if (isScanning) "识别中..." else "拍照",
+                        text = "拍照",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSecondary
                     )
@@ -271,22 +341,126 @@ fun FridgeScreen(
             }
         }
         
-        if (isScanning) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(32.dp)
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "正在识别食材...",
-                    style = MaterialTheme.typography.bodyLarge
-                )
+        // 扫描状态提示
+        when (scanState) {
+            is ScanState.Scanning -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = "正在识别食材...",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
             }
+            is ScanState.Success -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "成功",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = (scanState as ScanState.Success).message,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            }
+            is ScanState.Empty -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "提示",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = (scanState as ScanState.Empty).message,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            }
+            is ScanState.Failed -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = "错误",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = (scanState as ScanState.Failed).message,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            }
+            else -> {}
         }
         
         Spacer(modifier = Modifier.height(32.dp))
@@ -304,11 +478,16 @@ fun FridgeScreen(
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(fridgeItems) { item ->
+            items(fridgeItems, key = { it.id }) { item ->
                 FridgeItemCard(
                     item = item,
-                    onRemove = { scope.launch { db.fridgeItemDao().deleteById(item.id) } }
+                    onRemove = { viewModel.deleteItem(item.id) }
                 )
+            }
+            
+            // 底部空白
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
@@ -316,16 +495,16 @@ fun FridgeScreen(
 
 @Composable
 fun FridgeItemCard(
-    item: FridgeItem,
+    item: FridgeItemUi,
     onRemove: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when (item.status) {
-                FridgeItemStatus.EXPIRED -> MaterialTheme.colorScheme.errorContainer
-                FridgeItemStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondaryContainer
-                FridgeItemStatus.FRESH -> MaterialTheme.colorScheme.surfaceVariant
+                FoodStatus.EXPIRED -> MaterialTheme.colorScheme.errorContainer
+                FoodStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondaryContainer
+                FoodStatus.FRESH -> MaterialTheme.colorScheme.surfaceVariant
             }
         ),
         shape = RoundedCornerShape(12.dp)
@@ -346,19 +525,22 @@ fun FridgeItemCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 
+                Spacer(modifier = Modifier.height(4.dp))
+                
                 Text(
                     text = item.statusText,
                     style = MaterialTheme.typography.bodyLarge,
                     color = when (item.status) {
-                        FridgeItemStatus.EXPIRED -> MaterialTheme.colorScheme.error
-                        FridgeItemStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondary
-                        FridgeItemStatus.FRESH -> MaterialTheme.colorScheme.onSurfaceVariant
+                        FoodStatus.EXPIRED -> MaterialTheme.colorScheme.error
+                        FoodStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondary
+                        FoodStatus.FRESH -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
                 
-                if (item.advice.isNotEmpty()) {
+                if (item.adviceText.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = item.advice,
+                        text = item.adviceText,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -371,90 +553,35 @@ fun FridgeItemCard(
             ) {
                 Icon(
                     imageVector = when (item.status) {
-                        FridgeItemStatus.EXPIRED -> Icons.Default.Warning
-                        FridgeItemStatus.EXPIRING_SOON -> Icons.Default.Schedule
-                        FridgeItemStatus.FRESH -> Icons.Default.CheckCircle
+                        FoodStatus.EXPIRED -> Icons.Default.Warning
+                        FoodStatus.EXPIRING_SOON -> Icons.Default.Schedule
+                        FoodStatus.FRESH -> Icons.Default.CheckCircle
                     },
                     contentDescription = item.status.name,
                     tint = when (item.status) {
-                        FridgeItemStatus.EXPIRED -> MaterialTheme.colorScheme.error
-                        FridgeItemStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondary
-                        FridgeItemStatus.FRESH -> MaterialTheme.colorScheme.primary
+                        FoodStatus.EXPIRED -> MaterialTheme.colorScheme.error
+                        FoodStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondary
+                        FoodStatus.FRESH -> MaterialTheme.colorScheme.primary
                     },
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(32.dp)
                 )
                 
-                if (item.status == FridgeItemStatus.EXPIRED) {
+                if (item.status == FoodStatus.EXPIRED) {
                     IconButton(
                         onClick = onRemove,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "删除",
                             tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
             }
         }
     }
-}
-
-data class FridgeItem(
-    val id: Long,
-    val name: String,
-    val purchaseDate: Date,
-    val expiryDate: Date,
-    val status: FridgeItemStatus,
-    val statusText: String,
-    val advice: String
-)
-
-/** 将 Room 实体转为 UI 模型，并计算 status/statusText/advice */
-private fun FridgeItemEntity.toFridgeItem(): FridgeItem {
-    val now = System.currentTimeMillis()
-    val dayMs = 24L * 60 * 60 * 1000
-    val status = when {
-        now > expiryAt -> FridgeItemStatus.EXPIRED
-        expiryAt - now < 2 * dayMs -> FridgeItemStatus.EXPIRING_SOON
-        else -> FridgeItemStatus.FRESH
-    }
-    val statusText = when (status) {
-        FridgeItemStatus.EXPIRED -> "已经过期${(now - expiryAt) / dayMs}天了"
-        FridgeItemStatus.EXPIRING_SOON -> "很快要过期了"
-        FridgeItemStatus.FRESH -> "还能放${(expiryAt - now) / dayMs}天"
-    }
-    val advice = when (status) {
-        FridgeItemStatus.EXPIRED -> "别吃了，容易拉肚子"
-        FridgeItemStatus.EXPIRING_SOON -> "赶紧吃掉"
-        FridgeItemStatus.FRESH -> "可以放心吃"
-    }
-    return FridgeItem(
-        id = id,
-        name = name,
-        purchaseDate = Date(addedAt),
-        expiryDate = Date(expiryAt),
-        status = status,
-        statusText = statusText,
-        advice = advice
-    )
-}
-
-enum class FridgeItemStatus {
-    FRESH, EXPIRING_SOON, EXPIRED
-}
-
-fun getSampleFridgeItems(): List<FridgeItem> {
-    val now = Date()
-    val day = 24L * 60 * 60 * 1000
-    return listOf(
-        FridgeItem(id = 1L, name = "青菜", purchaseDate = Date(now.time - 4 * day), expiryDate = Date(now.time - 1 * day), status = FridgeItemStatus.EXPIRED, statusText = "已经过期1天了", advice = "别吃了，容易拉肚子"),
-        FridgeItem(id = 2L, name = "鸡蛋", purchaseDate = Date(now.time - 10 * day), expiryDate = Date(now.time + 1 * day), status = FridgeItemStatus.EXPIRING_SOON, statusText = "很快要过期了", advice = "赶紧吃掉，可以做个番茄鸡蛋汤"),
-        FridgeItem(id = 3L, name = "牛奶", purchaseDate = Date(now.time - 1 * day), expiryDate = Date(now.time + 5 * day), status = FridgeItemStatus.FRESH, statusText = "还能放5天", advice = "可以放心喝"),
-        FridgeItem(id = 4L, name = "苹果", purchaseDate = Date(now.time - 2 * day), expiryDate = Date(now.time + 3 * day), status = FridgeItemStatus.FRESH, statusText = "还能放3天", advice = "每天吃一个，营养好")
-    )
 }
 
 @Preview(showBackground = true)

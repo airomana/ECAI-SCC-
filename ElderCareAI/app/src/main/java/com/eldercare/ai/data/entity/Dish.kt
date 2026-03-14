@@ -15,7 +15,7 @@ import androidx.room.PrimaryKey
 data class Dish(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-
+    
     /** 菜名，如：红烧肉、地三鲜 */
     val name: String,
 

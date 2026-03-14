@@ -310,7 +310,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
                     FridgeItemEntity(name = "青菜", category = "蔬菜", addedAt = now - 4 * day, expiryAt = now - 1 * day),
                     FridgeItemEntity(name = "鸡蛋", category = "蛋奶", addedAt = now - 10 * day, expiryAt = now + 1 * day),
                     FridgeItemEntity(name = "牛奶", category = "蛋奶", addedAt = now - 1 * day, expiryAt = now + 5 * day),
-                    FridgeItemEntity(name = "苹果", category = "蔬菜", addedAt = now - 2 * day, expiryAt = now + 3 * day)
+                    FridgeItemEntity(name = "苹果", category = "水果", addedAt = now - 2 * day, expiryAt = now + 3 * day)
                 )
             )
         }
