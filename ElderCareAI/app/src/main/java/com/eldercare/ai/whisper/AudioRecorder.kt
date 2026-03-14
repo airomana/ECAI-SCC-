@@ -34,6 +34,23 @@ class AudioRecorder {
     private var recordingThread: Thread? = null
     
     val isRecordingState: StateFlow<Boolean> = recordingState.asStateFlow()
+
+    /**
+     * 获取当前已录制音频数据的快照（不会中断录音）
+     * 返回值为Float数组，已归一化到-1.0~1.0
+     */
+    fun getSnapshot(): FloatArray? {
+        synchronized(recordedAudioData) {
+            if (recordedAudioData.isEmpty()) {
+                return null
+            }
+            val floatArray = FloatArray(recordedAudioData.size)
+            for (i in recordedAudioData.indices) {
+                floatArray[i] = recordedAudioData[i] / 32768.0f
+            }
+            return floatArray
+        }
+    }
     
     /**
      * 开始录制（异步）
@@ -46,16 +63,17 @@ class AudioRecorder {
             return false
         }
         
-        val bufferSize = AudioRecord.getMinBufferSize(
+        val bufferSizeInBytes = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             CHANNEL_CONFIG,
             AUDIO_FORMAT
         ) * BUFFER_SIZE_MULTIPLIER
         
-        if (bufferSize == AudioRecord.ERROR_BAD_VALUE || bufferSize == AudioRecord.ERROR) {
+        if (bufferSizeInBytes == AudioRecord.ERROR_BAD_VALUE || bufferSizeInBytes == AudioRecord.ERROR) {
             Log.e(TAG, "Invalid buffer size")
             return false
         }
+        val bufferSizeInShorts = bufferSizeInBytes / 2
         
         try {
             audioRecord = AudioRecord(
@@ -63,7 +81,7 @@ class AudioRecorder {
                 SAMPLE_RATE,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
-                bufferSize
+                bufferSizeInBytes
             )
             
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
@@ -82,13 +100,15 @@ class AudioRecorder {
             
             // 启动读取线程，持续读取音频数据
             recordingThread = Thread {
-                val buffer = ShortArray(bufferSize)
+                val buffer = ShortArray(bufferSizeInShorts)
                 while (isRecording && audioRecord != null) {
                     try {
                         val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                         if (readSize > 0) {
                             synchronized(recordedAudioData) {
-                                recordedAudioData.addAll(buffer.take(readSize))
+                                for (i in 0 until readSize) {
+                                    recordedAudioData.add(buffer[i])
+                                }
                             }
                         } else if (readSize == AudioRecord.ERROR_INVALID_OPERATION || 
                                   readSize == AudioRecord.ERROR_BAD_VALUE) {
@@ -111,7 +131,7 @@ class AudioRecorder {
                 start()
             }
             
-            Log.d(TAG, "Recording started, buffer size: $bufferSize")
+            Log.d(TAG, "Recording started, buffer size: $bufferSizeInBytes")
             return true
             
         } catch (e: Exception) {
