@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.fridge.FoodStatus
+import com.eldercare.ai.fridge.FridgeFoodRag
 import com.eldercare.ai.fridge.FridgeRepository
 import com.eldercare.ai.fridge.ScanResult
 import com.eldercare.ai.fridge.ShelfLifeCalculator
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 class FridgeViewModel(application: Application) : AndroidViewModel(application) {
     
     private val database = ElderCareDatabase.getDatabase(application, viewModelScope)
+    private val rag = FridgeFoodRag(application)
     private val repository = FridgeRepository(
         application,
         database.fridgeItemDao(),
@@ -36,7 +38,7 @@ class FridgeViewModel(application: Application) : AndroidViewModel(application) 
     
     // 食材列表
     val fridgeItems: StateFlow<List<FridgeItemUi>> = repository.getAllItems()
-        .map { items -> items.map { it.toUiModel() } }
+        .map { items -> items.map { it.toUiModel(rag) } }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -159,11 +161,11 @@ data class FridgeItemUi(
 /**
  * 将数据库实体转换为UI模型
  */
-private fun FridgeItemEntity.toUiModel(): FridgeItemUi {
+private fun FridgeItemEntity.toUiModel(rag: FridgeFoodRag): FridgeItemUi {
     val currentTime = System.currentTimeMillis()
     val status = ShelfLifeCalculator.calculateFoodStatus(expiryAt, currentTime)
     val statusText = ShelfLifeCalculator.getStatusText(expiryAt, currentTime)
-    val adviceText = ShelfLifeCalculator.getAdviceText(name, category, expiryAt, currentTime)
+    val adviceText = rag.getAdviceText(name, category, expiryAt, currentTime)
     val remainingDays = ShelfLifeCalculator.getRemainingDays(expiryAt, currentTime)
     
     return FridgeItemUi(

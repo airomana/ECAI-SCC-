@@ -132,17 +132,11 @@ class FoodDetector(private val context: Context) {
                 val freshnessRaw = (item["freshness"] as? String)?.trim()
                 val freshness = if (freshnessRaw != null && allowedFreshness.contains(freshnessRaw)) freshnessRaw else "未知"
 
-                val advice = (item["advice"] as? String)?.trim()?.takeUnless { it.isBlank() }
-
-                val parsedDaysLeft = when (val raw = item["days_left"]) {
-                    is Number -> raw.toInt()
-                    is String -> raw.trim().toIntOrNull()
-                    else -> null
-                }
-                val daysLeft = when (freshness) {
-                    "疑似变质", "快坏" -> 0
-                    else -> parsedDaysLeft
-                }?.let { bucketDaysLeft(it) }
+                val spoilSignsObserved = when (val raw = item["spoil_signs_observed"]) {
+                    is List<*> -> raw.mapNotNull { it as? String }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                    is String -> raw.split("|", ",", "，").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                    else -> emptyList()
+                }.takeIf { it.isNotEmpty() }
 
                 val count = when (val raw = item["count"]) {
                     is Number -> raw.toInt()
@@ -157,10 +151,11 @@ class FoodDetector(private val context: Context) {
                         confidence = confidence,
                         boundingBox = BoundingBox(0, 0, 0, 0),
                         freshness = freshness,
-                        daysLeft = daysLeft,
-                        advice = advice,
+                        daysLeft = null,
+                        advice = null,
                         count = count,
-                        clarity = clarity
+                        clarity = clarity,
+                        spoilSignsObserved = spoilSignsObserved
                     )
                 )
             }
@@ -312,17 +307,17 @@ class FoodDetector(private val context: Context) {
             val mergedClarity = worseClarity(existing.clarity, f.clarity)
             val mergedFreshness = worseFreshness(existing.freshness, f.freshness)
             val mergedDays = mergeDaysLeft(existing.daysLeft, f.daysLeft)
-            val mergedAdvice = existing.advice ?: f.advice
             val mergedCategory = if (existing.category != "其他") existing.category else f.category
+            val mergedSpoilSignsObserved = mergeSigns(existing.spoilSignsObserved, f.spoilSignsObserved)
 
             map[key] = existing.copy(
                 category = mergedCategory,
                 confidence = mergedConfidence,
                 freshness = mergedFreshness,
                 daysLeft = mergedDays,
-                advice = mergedAdvice,
                 count = mergedCount,
-                clarity = mergedClarity
+                clarity = mergedClarity,
+                spoilSignsObserved = mergedSpoilSignsObserved
             )
         }
         return map.values.toList()
@@ -358,18 +353,13 @@ class FoodDetector(private val context: Context) {
         if (food.confidence < 0.5f) return true
         val freshness = food.freshness?.trim().orEmpty()
         if (freshness == "未知") return true
-        if (food.daysLeft == null) return true
         return false
     }
 
-    private fun bucketDaysLeft(value: Int): Int {
-        val allowed = intArrayOf(0, 1, 2, 3, 5, 7, 14)
-        val v = value.coerceIn(0, 365)
-        var chosen = 0
-        for (a in allowed) {
-            if (a <= v) chosen = a else break
-        }
-        return chosen
+    private fun mergeSigns(a: List<String>?, b: List<String>?): List<String>? {
+        if (a.isNullOrEmpty()) return b
+        if (b.isNullOrEmpty()) return a
+        return (a + b).map { it.trim() }.filter { it.isNotBlank() }.distinct().takeIf { it.isNotEmpty() }
     }
 
     private fun preprocessBitmap(original: Bitmap): Bitmap {
@@ -426,6 +416,7 @@ class FoodDetector(private val context: Context) {
             c.contains("海鲜") || c.contains("水产") -> "海鲜"
             c.contains("肉") -> "肉类"
             c.contains("豆") -> "豆制品"
+            c.contains("熟") -> "熟食"
             c.contains("主食") || c.contains("米") || c.contains("面") -> "主食"
             else -> "其他"
         }
@@ -462,7 +453,8 @@ data class DetectedFood(
     val daysLeft: Int? = null,
     val advice: String? = null,
     val count: Int = 1,
-    val clarity: String? = null
+    val clarity: String? = null,
+    val spoilSignsObserved: List<String>? = null
 )
 
 /**
