@@ -8,12 +8,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.eldercare.ai.ui.screens.home.HomeScreen
 import com.eldercare.ai.ui.screens.menu.MenuScanScreen
 import com.eldercare.ai.ui.screens.fridge.FridgeScreen
+import com.eldercare.ai.ui.screens.fridge.FridgeHistoryScreen
+import com.eldercare.ai.ui.screens.fridge.FridgeHistoryDetailScreen
 import com.eldercare.ai.ui.screens.voice.VoiceDiaryScreen
 import com.eldercare.ai.ui.screens.settings.SettingsScreen
 import com.eldercare.ai.ui.screens.family.FamilyGuardScreen
@@ -179,6 +183,27 @@ fun ElderCareNavigation(
         
         composable("fridge") {
             FridgeScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToHistory = { navController.navigate("fridge_history") }
+            )
+        }
+
+        composable("fridge_history") {
+            FridgeHistoryScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToDetail = { scanId ->
+                    navController.navigate("fridge_history/$scanId")
+                }
+            )
+        }
+
+        composable(
+            route = "fridge_history/{scanId}",
+            arguments = listOf(navArgument("scanId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val scanId = backStackEntry.arguments?.getLong("scanId") ?: 0L
+            FridgeHistoryDetailScreen(
+                scanId = scanId,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

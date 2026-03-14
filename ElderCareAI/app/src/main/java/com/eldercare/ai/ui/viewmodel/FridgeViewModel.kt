@@ -19,7 +19,12 @@ import kotlinx.coroutines.launch
 class FridgeViewModel(application: Application) : AndroidViewModel(application) {
     
     private val database = ElderCareDatabase.getDatabase(application, viewModelScope)
-    private val repository = FridgeRepository(application, database.fridgeItemDao())
+    private val repository = FridgeRepository(
+        application,
+        database.fridgeItemDao(),
+        database.fridgeScanDao(),
+        database.fridgeScanItemDao()
+    )
     
     // UI状态
     private val _uiState = MutableStateFlow<FridgeUiState>(FridgeUiState.Loading)

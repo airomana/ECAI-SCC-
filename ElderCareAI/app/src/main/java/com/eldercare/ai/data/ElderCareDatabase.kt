@@ -11,10 +11,14 @@ import com.eldercare.ai.data.dao.DishDao
 import com.eldercare.ai.data.dao.HealthProfileDao
 import com.eldercare.ai.data.dao.DiaryEntryDao
 import com.eldercare.ai.data.dao.FridgeItemDao
+import com.eldercare.ai.data.dao.FridgeScanDao
+import com.eldercare.ai.data.dao.FridgeScanItemDao
 import com.eldercare.ai.data.dao.UserDao
 import com.eldercare.ai.data.dao.FamilyRelationDao
 import com.eldercare.ai.data.entity.Dish
 import com.eldercare.ai.data.entity.FridgeItemEntity
+import com.eldercare.ai.data.entity.FridgeScanEntity
+import com.eldercare.ai.data.entity.FridgeScanItemEntity
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.DiaryEntryEntity
 import com.eldercare.ai.data.entity.User
@@ -25,7 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 const val ELDER_CARE_DB_NAME = "elder_care_db"
-const val ELDER_CARE_DB_VERSION = 2
+const val ELDER_CARE_DB_VERSION = 4
 
 @Database(
     entities = [
@@ -33,6 +37,8 @@ const val ELDER_CARE_DB_VERSION = 2
         HealthProfile::class,
         DiaryEntryEntity::class,
         FridgeItemEntity::class,
+        FridgeScanEntity::class,
+        FridgeScanItemEntity::class,
         User::class,
         FamilyRelation::class
     ],
@@ -46,6 +52,8 @@ abstract class ElderCareDatabase : RoomDatabase() {
     abstract fun healthProfileDao(): HealthProfileDao
     abstract fun diaryEntryDao(): DiaryEntryDao
     abstract fun fridgeItemDao(): FridgeItemDao
+    abstract fun fridgeScanDao(): FridgeScanDao
+    abstract fun fridgeScanItemDao(): FridgeScanItemDao
     abstract fun userDao(): UserDao
     abstract fun familyRelationDao(): FamilyRelationDao
 
@@ -101,6 +109,108 @@ abstract class ElderCareDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Starting migration from version 2 to 3")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS fridge_scan (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            scannedAt INTEGER NOT NULL,
+                            itemCount INTEGER NOT NULL,
+                            note TEXT NOT NULL DEFAULT ''
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_scannedAt ON fridge_scan(scannedAt)")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS fridge_scan_item (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            scanId INTEGER NOT NULL,
+                            name TEXT NOT NULL,
+                            category TEXT NOT NULL,
+                            addedAt INTEGER NOT NULL,
+                            expiryAt INTEGER NOT NULL,
+                            FOREIGN KEY(scanId) REFERENCES fridge_scan(id) ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_item_scanId ON fridge_scan_item(scanId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_item_expiryAt ON fridge_scan_item(expiryAt)")
+
+                    android.util.Log.d("ElderCareDatabase", "Migration completed successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Migration failed", e)
+                    throw e
+                }
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Starting migration from version 3 to 4")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS fridge_scan (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            scannedAt INTEGER NOT NULL,
+                            itemCount INTEGER NOT NULL,
+                            note TEXT NOT NULL DEFAULT ''
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_scannedAt ON fridge_scan(scannedAt)")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS fridge_scan_item (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            scanId INTEGER NOT NULL,
+                            name TEXT NOT NULL,
+                            category TEXT NOT NULL,
+                            addedAt INTEGER NOT NULL,
+                            expiryAt INTEGER NOT NULL,
+                            FOREIGN KEY(scanId) REFERENCES fridge_scan(id) ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_item_scanId ON fridge_scan_item(scanId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_fridge_scan_item_expiryAt ON fridge_scan_item(expiryAt)")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS fridge_item_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            category TEXT NOT NULL,
+                            addedAt INTEGER NOT NULL,
+                            expiryAt INTEGER NOT NULL
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL(
+                        """
+                        INSERT INTO fridge_item_new (id, name, category, addedAt, expiryAt)
+                        SELECT id, name, category, addedAt, expiryAt FROM fridge_item
+                        """.trimIndent()
+                    )
+                    database.execSQL("DROP TABLE fridge_item")
+                    database.execSQL("ALTER TABLE fridge_item_new RENAME TO fridge_item")
+
+                    android.util.Log.d("ElderCareDatabase", "Migration completed successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Migration failed", e)
+                    throw e
+                }
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope
@@ -113,7 +223,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
                         ElderCareDatabase::class.java,
                         ELDER_CARE_DB_NAME
                     )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .addCallback(ElderCareDatabaseCallback(scope))
                     .fallbackToDestructiveMigrationOnDowngrade() // 降级时重建数据库
                     .allowMainThreadQueries() // 临时允许主线程查询，避免启动阻塞
