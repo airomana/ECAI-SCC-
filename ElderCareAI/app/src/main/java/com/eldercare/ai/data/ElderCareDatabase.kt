@@ -15,6 +15,9 @@ import com.eldercare.ai.data.dao.FridgeScanDao
 import com.eldercare.ai.data.dao.FridgeScanItemDao
 import com.eldercare.ai.data.dao.UserDao
 import com.eldercare.ai.data.dao.FamilyRelationDao
+import com.eldercare.ai.data.dao.PersonalSituationDao
+import com.eldercare.ai.data.dao.EmergencyContactDao
+import com.eldercare.ai.data.dao.ProfileEditRequestDao
 import com.eldercare.ai.data.entity.Dish
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.data.entity.FridgeScanEntity
@@ -23,13 +26,16 @@ import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.DiaryEntryEntity
 import com.eldercare.ai.data.entity.User
 import com.eldercare.ai.data.entity.FamilyRelation
+import com.eldercare.ai.data.entity.PersonalSituationEntity
+import com.eldercare.ai.data.entity.EmergencyContactEntity
+import com.eldercare.ai.data.entity.ProfileEditRequestEntity
 import com.eldercare.ai.data.converters.Converters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 const val ELDER_CARE_DB_NAME = "elder_care_db"
-const val ELDER_CARE_DB_VERSION = 4
+const val ELDER_CARE_DB_VERSION = 5
 
 @Database(
     entities = [
@@ -40,7 +46,10 @@ const val ELDER_CARE_DB_VERSION = 4
         FridgeScanEntity::class,
         FridgeScanItemEntity::class,
         User::class,
-        FamilyRelation::class
+        FamilyRelation::class,
+        PersonalSituationEntity::class,
+        EmergencyContactEntity::class,
+        ProfileEditRequestEntity::class
     ],
     version = ELDER_CARE_DB_VERSION,
     exportSchema = false
@@ -56,6 +65,9 @@ abstract class ElderCareDatabase : RoomDatabase() {
     abstract fun fridgeScanItemDao(): FridgeScanItemDao
     abstract fun userDao(): UserDao
     abstract fun familyRelationDao(): FamilyRelationDao
+    abstract fun personalSituationDao(): PersonalSituationDao
+    abstract fun emergencyContactDao(): EmergencyContactDao
+    abstract fun profileEditRequestDao(): ProfileEditRequestDao
 
     companion object {
         @Volatile
@@ -211,6 +223,72 @@ abstract class ElderCareDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Starting migration from version 4 to 5")
+
+                    database.execSQL("ALTER TABLE health_profile ADD COLUMN sex TEXT NOT NULL DEFAULT ''")
+                    database.execSQL("ALTER TABLE health_profile ADD COLUMN birthYear INTEGER NOT NULL DEFAULT 0")
+                    database.execSQL("ALTER TABLE health_profile ADD COLUMN dietRestrictions TEXT NOT NULL DEFAULT '[]'")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS personal_situation (
+                            id INTEGER PRIMARY KEY NOT NULL,
+                            city TEXT NOT NULL DEFAULT '',
+                            livingAlone INTEGER NOT NULL DEFAULT 0,
+                            tastePreferences TEXT NOT NULL DEFAULT '[]',
+                            chewLevel TEXT NOT NULL DEFAULT '',
+                            preferSoftFood INTEGER NOT NULL DEFAULT 0,
+                            symptoms TEXT NOT NULL DEFAULT '[]',
+                            bloodPressureStatus TEXT NOT NULL DEFAULT '',
+                            bloodSugarStatus TEXT NOT NULL DEFAULT '',
+                            shareHealth INTEGER NOT NULL DEFAULT 0,
+                            shareDiet INTEGER NOT NULL DEFAULT 0,
+                            shareContacts INTEGER NOT NULL DEFAULT 0,
+                            updatedAt INTEGER NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS emergency_contact (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL DEFAULT '',
+                            phone TEXT NOT NULL DEFAULT '',
+                            relation TEXT NOT NULL DEFAULT '',
+                            isPrimary INTEGER NOT NULL DEFAULT 0,
+                            updatedAt INTEGER NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_emergency_contact_isPrimary ON emergency_contact(isPrimary)")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS profile_edit_request (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'pending',
+                            proposerUserId INTEGER NOT NULL DEFAULT 0,
+                            proposerRole TEXT NOT NULL DEFAULT '',
+                            payloadJson TEXT NOT NULL DEFAULT '',
+                            createdAt INTEGER NOT NULL DEFAULT 0,
+                            handledAt INTEGER NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_profile_edit_request_status ON profile_edit_request(status)")
+
+                    android.util.Log.d("ElderCareDatabase", "Migration completed successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Migration failed", e)
+                    throw e
+                }
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope
@@ -223,7 +301,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
                         ElderCareDatabase::class.java,
                         ELDER_CARE_DB_NAME
                     )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .addCallback(ElderCareDatabaseCallback(scope))
                     .fallbackToDestructiveMigrationOnDowngrade() // 降级时重建数据库
                     .allowMainThreadQueries() // 临时允许主线程查询，避免启动阻塞

@@ -397,6 +397,7 @@ class LlmService private constructor(private val context: Context) {
         val userName = healthProfile?.name?.takeIf { it.isNotBlank() } ?: "用户"
         val diseases = healthProfile?.diseases?.takeIf { it.isNotEmpty() }
         val allergies = healthProfile?.allergies?.takeIf { it.isNotEmpty() }
+        val restrictions = healthProfile?.dietRestrictions?.takeIf { it.isNotEmpty() }
         
         return buildString {
             append("请用简单易懂的大白话描述这道菜：$dishName。")
@@ -407,13 +408,16 @@ class LlmService private constructor(private val context: Context) {
             append("\n4. 如果有健康提醒，用简单的话说明（如血压高的要少吃）")
             append("\n5. 控制在50字以内，语言亲切自然")
             
-            if (diseases != null || allergies != null) {
+            if (diseases != null || allergies != null || restrictions != null) {
                 append("\n\n用户信息：")
                 if (diseases != null) {
                     append("\n- 疾病：${diseases.joinToString("、")}")
                 }
                 if (allergies != null) {
                     append("\n- 过敏：${allergies.joinToString("、")}")
+                }
+                if (restrictions != null) {
+                    append("\n- 忌口/医嘱：${restrictions.joinToString("、")}")
                 }
                 append("\n请根据用户情况，给出个性化的健康建议。")
             }

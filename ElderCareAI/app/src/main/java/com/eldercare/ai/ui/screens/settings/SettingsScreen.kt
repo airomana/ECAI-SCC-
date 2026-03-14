@@ -32,11 +32,10 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onNavigateBack: () -> Unit = {},
     onNavigateToFamilyGuard: () -> Unit = {},
+    onNavigateToPersonalSituation: () -> Unit = {},
     onLogout: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    var showHealthProfileDialog by remember { mutableStateOf(false) }
-    var showEmergencyContactDialog by remember { mutableStateOf(false) }
     var showInviteCodeDialog by remember { mutableStateOf(false) }
     var showLinkInviteCodeDialog by remember { mutableStateOf(false) }
     var showLlmConfigDialog by remember { mutableStateOf(false) }
@@ -100,19 +99,21 @@ fun SettingsScreen(
         ) {
             item {
                 SettingsSection(title = "个人信息") {
-                    SettingsItem(
-                        icon = Icons.Default.Person,
-                        title = "健康档案",
-                        subtitle = "设置您的健康信息",
-                        onClick = { showHealthProfileDialog = true }
-                    )
-                    
-                    SettingsItem(
-                        icon = Icons.Default.ContactPhone,
-                        title = "紧急联系人",
-                        subtitle = "设置家人联系方式",
-                        onClick = { showEmergencyContactDialog = true }
-                    )
+                    if (currentRole == "parent") {
+                        SettingsItem(
+                            icon = Icons.Default.Person,
+                            title = "个人情况（详细）",
+                            subtitle = "健康、饮食、守护等信息",
+                            onClick = onNavigateToPersonalSituation
+                        )
+                    } else {
+                        SettingsItem(
+                            icon = Icons.Default.People,
+                            title = "父母信息",
+                            subtitle = "在子女守护中心查看已授权信息",
+                            onClick = onNavigateToFamilyGuard
+                        )
+                    }
                 }
             }
             
@@ -263,41 +264,6 @@ fun SettingsScreen(
                 }
             }
         }
-    }
-    
-    // 健康档案对话框
-    if (showHealthProfileDialog) {
-        HealthProfileDialog(
-            db = db,
-            onDismiss = { showHealthProfileDialog = false },
-            onSave = { name, age, diseases ->
-                scope.launch {
-                    val existing = db.healthProfileDao().getOnce()
-                    val ds = diseases.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    val profile = HealthProfile(
-                        id = existing?.id ?: 0,
-                        name = name,
-                        age = age.toIntOrNull() ?: 0,
-                        diseases = ds,
-                        allergies = existing?.allergies ?: emptyList(),
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    if (existing != null) db.healthProfileDao().update(profile) else db.healthProfileDao().insert(profile)
-                }
-                showHealthProfileDialog = false
-            }
-        )
-    }
-    
-    // 紧急联系人对话框
-    if (showEmergencyContactDialog) {
-        EmergencyContactDialog(
-            onDismiss = { showEmergencyContactDialog = false },
-            onSave = { 
-                showEmergencyContactDialog = false
-                // 保存紧急联系人
-            }
-        )
     }
     
     // 查看邀请码对话框（父母端）

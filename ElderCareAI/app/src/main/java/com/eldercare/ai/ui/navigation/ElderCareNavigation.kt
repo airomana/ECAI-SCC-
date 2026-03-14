@@ -20,6 +20,7 @@ import com.eldercare.ai.ui.screens.fridge.FridgeHistoryScreen
 import com.eldercare.ai.ui.screens.fridge.FridgeHistoryDetailScreen
 import com.eldercare.ai.ui.screens.voice.VoiceDiaryScreen
 import com.eldercare.ai.ui.screens.settings.SettingsScreen
+import com.eldercare.ai.ui.screens.settings.PersonalSituationScreen
 import com.eldercare.ai.ui.screens.family.FamilyGuardScreen
 import com.eldercare.ai.ui.screens.family.ChildHomeScreen
 import com.eldercare.ai.ui.screens.role.RoleSelectionScreen
@@ -218,6 +219,7 @@ fun ElderCareNavigation(
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToFamilyGuard = { navController.navigate("family_guard") },
+                onNavigateToPersonalSituation = { navController.navigate("personal_situation") },
                 onLogout = {
                     isLoggedIn = false
                     userRole = ""
@@ -230,6 +232,12 @@ fun ElderCareNavigation(
         
         composable("family_guard") {
             FamilyGuardScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("personal_situation") {
+            PersonalSituationScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

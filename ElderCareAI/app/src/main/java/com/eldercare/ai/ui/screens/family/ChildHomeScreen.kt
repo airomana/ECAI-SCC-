@@ -2,6 +2,7 @@ package com.eldercare.ai.ui.screens.family
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -9,13 +10,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eldercare.ai.rememberElderCareDatabase
+import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.DiaryEntryEntity
+import com.eldercare.ai.data.entity.EmergencyContactEntity
 import com.eldercare.ai.data.entity.HealthProfile
+import com.eldercare.ai.data.entity.PersonalSituationEntity
+import com.eldercare.ai.data.entity.ProfileEditRequestEntity
+import com.eldercare.ai.data.model.ProfileEditPayload
 import com.eldercare.ai.ui.theme.ElderCareAITheme
+import com.google.gson.Gson
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,12 +40,20 @@ fun ChildHomeScreen(
     onNavigateToSettings: () -> Unit = {}
 ) {
     val db = rememberElderCareDatabase()
+    val context = LocalContext.current
+    val settingsManager = remember { SettingsManager.getInstance(context) }
+    val gson = remember { Gson() }
+    val scope = rememberCoroutineScope()
     val diaryEntries by db.diaryEntryDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
-    var healthProfile by remember { mutableStateOf<HealthProfile?>(null) }
-    
-    LaunchedEffect(Unit) {
-        healthProfile = db.healthProfileDao().getOnce()
-    }
+    val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
+    val personalSituation by db.personalSituationDao().get().collectAsStateWithLifecycle(initialValue = null)
+    val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val pendingRequests by db.profileEditRequestDao().getByStatus("pending").collectAsStateWithLifecycle(initialValue = emptyList())
+    val shareHealth = personalSituation?.shareHealth ?: false
+    val shareDiet = personalSituation?.shareDiet ?: false
+    val shareContacts = personalSituation?.shareContacts ?: false
+    var showSuggestDialog by remember { mutableStateOf(false) }
+    var showSubmittedDialog by remember { mutableStateOf(false) }
     
     // 计算统计数据
     val now = System.currentTimeMillis()
@@ -68,11 +86,35 @@ fun ChildHomeScreen(
         ) {
             // 健康档案卡片
             ChildHealthProfileCard(
-                healthProfile = healthProfile,
+                healthProfile = if (shareHealth) healthProfile else null,
+                shareHealth = shareHealth,
                 onEditClick = {
-                    // TODO: 打开编辑健康档案界面
+                    if (shareHealth) showSuggestDialog = true
                 }
             )
+
+            if (shareContacts) {
+                ChildEmergencyContactsCard(contacts = contacts)
+            }
+
+            if (pendingRequests.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("修改建议已提交", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "等待父母确认后生效",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
             
             // 本周统计卡片
             Card(
@@ -175,11 +217,51 @@ fun ChildHomeScreen(
             }
         }
     }
+
+    if (showSuggestDialog) {
+        ChildSuggestProfileDialog(
+            healthProfile = healthProfile,
+            personalSituation = personalSituation,
+            shareDiet = shareDiet,
+            onDismiss = { showSuggestDialog = false },
+            onSubmit = { payload ->
+                scope.launch {
+                    val json = gson.toJson(payload)
+                    val userId = settingsManager.getCurrentUserId() ?: 0L
+                    db.profileEditRequestDao().insert(
+                        ProfileEditRequestEntity(
+                            status = "pending",
+                            proposerUserId = userId,
+                            proposerRole = "child",
+                            payloadJson = json,
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+                showSuggestDialog = false
+                showSubmittedDialog = true
+            }
+        )
+    }
+
+    if (showSubmittedDialog) {
+        AlertDialog(
+            onDismissRequest = { showSubmittedDialog = false },
+            title = { Text("已提交") },
+            text = { Text("修改建议已提交，等待父母确认") },
+            confirmButton = {
+                TextButton(onClick = { showSubmittedDialog = false }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun ChildHealthProfileCard(
     healthProfile: HealthProfile?,
+    shareHealth: Boolean,
     onEditClick: () -> Unit
 ) {
     Card(
@@ -198,18 +280,25 @@ private fun ChildHealthProfileCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "父母健康档案",
+                    text = "父母健康信息",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 TextButton(onClick = onEditClick) {
-                    Text("编辑")
+                    Text(if (shareHealth) "建议修改" else "未授权")
                 }
             }
             
             if (healthProfile != null) {
                 Text("姓名：${healthProfile.name}")
-                Text("年龄：${healthProfile.age}岁")
+                if (healthProfile.sex.isNotBlank()) {
+                    Text("性别：${healthProfile.sex}")
+                }
+                if (healthProfile.age > 0) {
+                    Text("年龄：${healthProfile.age}岁")
+                } else if (healthProfile.birthYear > 0) {
+                    Text("出生年：${healthProfile.birthYear}")
+                }
                 if (healthProfile.diseases.isNotEmpty()) {
                     Text("疾病：${healthProfile.diseases.joinToString("、")}")
                 }
@@ -219,11 +308,155 @@ private fun ChildHealthProfileCard(
                         color = MaterialTheme.colorScheme.error
                     )
                 }
+                if (healthProfile.dietRestrictions.isNotEmpty()) {
+                    Text("忌口：${healthProfile.dietRestrictions.joinToString("、")}")
+                }
             } else {
-                Text("未设置健康档案，点击编辑进行设置")
+                Text(
+                    text = if (shareHealth) "未设置健康信息" else "父母暂未授权共享健康信息",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
+}
+
+@Composable
+private fun ChildEmergencyContactsCard(
+    contacts: List<EmergencyContactEntity>
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("紧急联系人", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (contacts.isEmpty()) {
+                Text("未设置", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                contacts.take(3).forEach { c ->
+                    Text("${c.name.ifBlank { "未命名" }}：${c.phone}")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChildSuggestProfileDialog(
+    healthProfile: HealthProfile?,
+    personalSituation: PersonalSituationEntity?,
+    shareDiet: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (ProfileEditPayload) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var sex by remember { mutableStateOf("") }
+    var age by remember { mutableStateOf("") }
+    var birthYear by remember { mutableStateOf("") }
+    var diseases by remember { mutableStateOf("") }
+    var allergies by remember { mutableStateOf("") }
+    var restrictions by remember { mutableStateOf("") }
+
+    LaunchedEffect(healthProfile) {
+        name = healthProfile?.name ?: ""
+        sex = healthProfile?.sex ?: ""
+        age = healthProfile?.age?.takeIf { it > 0 }?.toString() ?: ""
+        birthYear = healthProfile?.birthYear?.takeIf { it > 0 }?.toString() ?: ""
+        diseases = healthProfile?.diseases?.joinToString(", ") ?: ""
+        allergies = healthProfile?.allergies?.joinToString(", ") ?: ""
+        restrictions = healthProfile?.dietRestrictions?.joinToString(", ") ?: ""
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("建议父母修改") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("姓名") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = sex,
+                    onValueChange = { sex = it },
+                    label = { Text("性别") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = age,
+                        onValueChange = { age = it.filter { ch -> ch.isDigit() }.take(3) },
+                        label = { Text("年龄") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = birthYear,
+                        onValueChange = { birthYear = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("出生年") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    value = diseases,
+                    onValueChange = { diseases = it },
+                    label = { Text("慢病（逗号分隔）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = allergies,
+                    onValueChange = { allergies = it },
+                    label = { Text("过敏/禁忌（逗号分隔）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = restrictions,
+                    onValueChange = { restrictions = it },
+                    label = { Text("忌口/医嘱（逗号分隔）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                if (!shareDiet) {
+                    Text(
+                        text = "父母暂未授权共享饮食偏好，此处仅提交健康相关建议",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val ds = diseases.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    val als = allergies.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    val rs = restrictions.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    onSubmit(
+                        ProfileEditPayload(
+                            name = name.trim(),
+                            sex = sex.trim(),
+                            age = age.toIntOrNull() ?: 0,
+                            birthYear = birthYear.toIntOrNull() ?: 0,
+                            diseases = ds,
+                            allergies = als,
+                            dietRestrictions = rs
+                        )
+                    )
+                }
+            ) { Text("提交") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable

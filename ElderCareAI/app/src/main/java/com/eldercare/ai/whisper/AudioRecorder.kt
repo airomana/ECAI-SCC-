@@ -1,5 +1,6 @@
 package com.eldercare.ai.whisper
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -38,6 +39,7 @@ class AudioRecorder {
      * 开始录制（异步）
      * 需要在后台线程调用stopRecording()来获取录制的音频数据
      */
+    @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
         if (isRecording) {
             Log.w(TAG, "Already recording")
