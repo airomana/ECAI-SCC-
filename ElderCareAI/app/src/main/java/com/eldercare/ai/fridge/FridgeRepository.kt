@@ -29,6 +29,8 @@ class FridgeRepository(
 ) {
     
     private val foodDetector = FoodDetector(context)
+    private val visionModelFast = "qwen-vl-plus"
+    private val visionModelMax = "qwen-vl-max"
     
     /**
      * 初始化
@@ -41,7 +43,7 @@ class FridgeRepository(
      * 扫描冰箱图片，识别食材并保存
      * 每次扫描前会清空旧数据，确保只显示本次识别结果
      */
-    suspend fun scanFridge(bitmap: Bitmap): ScanResult {
+    suspend fun scanFridge(bitmap: Bitmap, highAccuracy: Boolean = false): ScanResult {
         try {
             if (!LlmConfig.isEnabled(context)) {
                 return ScanResult.Error("大模型未启用，请到设置里开启")
@@ -54,10 +56,11 @@ class FridgeRepository(
             fridgeItemDao.deleteAll()
             
             // 1. 检测食材
-            val detectedFoods = foodDetector.detectFoods(bitmap)
+            val detection = detectFoodsWithModelLayering(bitmap, highAccuracy)
+            val detectedFoods = detection.foods
             
             if (detectedFoods.isEmpty()) {
-                return ScanResult.Empty("没有识别到食材，请重新拍摄")
+                return ScanResult.Empty("看不清或没对准冰箱内部，建议补拍")
             }
             
             // 2. 计算保质期并保存到数据库
@@ -100,7 +103,10 @@ class FridgeRepository(
             
             return ScanResult.Success(
                 itemCount = newItems.size,
-                items = newItems
+                items = newItems,
+                unknownCount = detection.unknownCount,
+                modelUsed = detection.modelUsed,
+                wasUpgraded = detection.wasUpgraded
             )
         } catch (e: LlmAuthException) {
             return ScanResult.Error("大模型API Key无效，请到设置里重新填写")
@@ -109,6 +115,60 @@ class FridgeRepository(
         } catch (e: Exception) {
             return ScanResult.Error("识别失败：${e.message}")
         }
+    }
+
+    private suspend fun detectFoodsWithModelLayering(bitmap: Bitmap, highAccuracy: Boolean): LayeredDetection {
+        if (highAccuracy) {
+            val max = foodDetector.detectFoods(bitmap, visionModelMax)
+            return LayeredDetection(
+                foods = max.foods,
+                unknownCount = max.unknownCount,
+                modelUsed = max.modelUsed,
+                wasUpgraded = true
+            )
+        }
+
+        val fast = foodDetector.detectFoods(bitmap, visionModelFast)
+        val needsUpgrade = fast.foods.isEmpty() || shouldUpgrade(fast)
+        if (!needsUpgrade) {
+            return LayeredDetection(
+                foods = fast.foods,
+                unknownCount = fast.unknownCount,
+                modelUsed = fast.modelUsed,
+                wasUpgraded = false
+            )
+        }
+
+        val max = foodDetector.detectFoods(bitmap, visionModelMax)
+        val chosen = chooseBetter(fast, max)
+        return LayeredDetection(
+            foods = chosen.foods,
+            unknownCount = chosen.unknownCount,
+            modelUsed = chosen.modelUsed,
+            wasUpgraded = true
+        )
+    }
+
+    private fun shouldUpgrade(result: FoodDetectionResult): Boolean {
+        val total = result.foods.size
+        if (total == 0) return true
+        val ratio = result.unknownCount.toFloat() / total.toFloat()
+        return ratio >= 0.4f || result.unknownCount >= 2
+    }
+
+    private fun chooseBetter(a: FoodDetectionResult, b: FoodDetectionResult): FoodDetectionResult {
+        if (b.foods.isEmpty()) return a
+        if (a.foods.isEmpty()) return b
+
+        val aScore = scoreDetection(a)
+        val bScore = scoreDetection(b)
+        return if (bScore >= aScore) b else a
+    }
+
+    private fun scoreDetection(r: FoodDetectionResult): Int {
+        val total = r.foods.size
+        val known = total - r.unknownCount
+        return known * 1000 + total
     }
 
     private fun buildExpiryTime(food: DetectedFood, nowEpochMs: Long): Long {
@@ -222,9 +282,19 @@ class FridgeRepository(
 sealed class ScanResult {
     data class Success(
         val itemCount: Int,
-        val items: List<FridgeItemEntity>
+        val items: List<FridgeItemEntity>,
+        val unknownCount: Int,
+        val modelUsed: String,
+        val wasUpgraded: Boolean
     ) : ScanResult()
     
     data class Empty(val message: String) : ScanResult()
     data class Error(val message: String) : ScanResult()
 }
+
+private data class LayeredDetection(
+    val foods: List<DetectedFood>,
+    val unknownCount: Int,
+    val modelUsed: String,
+    val wasUpgraded: Boolean
+)

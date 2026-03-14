@@ -231,9 +231,10 @@ class LlmService private constructor(private val context: Context) {
     /**
      * 识别图片中的食材（使用通义千问视觉模型）
      * @param imageBase64 图片的Base64编码（不包含data:image/jpeg;base64,前缀）
+     * @param visionModel 视觉模型名称（例如 qwen-vl-plus / qwen-vl-max）
      * @return 识别结果JSON字符串
      */
-    suspend fun analyzeImage(imageBase64: String): String? = withContext(Dispatchers.IO) {
+    suspend fun analyzeImage(imageBase64: String, visionModel: String = "qwen-vl-max"): String? = withContext(Dispatchers.IO) {
         try {
             // 检查配置
             if (!config.isConfigured()) {
@@ -249,7 +250,7 @@ class LlmService private constructor(private val context: Context) {
 
             // 构建请求
             val request = DashScopeMultimodalRequest(
-                model = "qwen-vl-max", // 使用通义千问视觉增强版模型
+                model = visionModel,
                 input = DashScopeMultimodalInput(
                     messages = listOf(
                         DashScopeMultimodalMessage(
