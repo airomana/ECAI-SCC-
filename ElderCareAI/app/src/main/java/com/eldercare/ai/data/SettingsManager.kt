@@ -10,7 +10,6 @@ import android.content.SharedPreferences
 class SettingsManager(context: Context) {
     private val prefs: SharedPreferences = 
         context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-    
     companion object {
         @Volatile
         private var INSTANCE: SettingsManager? = null

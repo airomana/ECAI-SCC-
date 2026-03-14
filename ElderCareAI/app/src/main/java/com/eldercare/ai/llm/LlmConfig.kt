@@ -24,7 +24,7 @@ object LlmConfig {
      * 3. 创建新的API Key
      * 4. 将API Key填入此处（建议使用环境变量或配置文件，不要硬编码）
      */
-    var API_KEY: String = ""
+    var API_KEY: String = "sk-7d12d090a20e408d88e00049e6d0a7a3"
         private set
     
     /**
@@ -69,6 +69,11 @@ object LlmConfig {
         val savedApiKey = settings.getLlmApiKey()
         if (savedApiKey.isNotBlank()) {
             API_KEY = savedApiKey
+        }
+        
+        // 如果 API_KEY 为空，尝试使用默认硬编码 Key（仅供测试）
+        if (API_KEY.isBlank()) {
+            API_KEY = "sk-7d12d090a20e408d88e00049e6d0a7a3"
         }
         
         // 从设置中读取模型名称（如果已配置）
