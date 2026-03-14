@@ -47,19 +47,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        
-        <!-- 相机拍照Activity -->
-        <activity
-            android:name=".ui.camera.CameraActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
-            
-        <!-- 设置Activity -->
-        <activity
-            android:name=".ui.settings.SettingsActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
-        
         <!-- FileProvider for camera photos -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -59,7 +59,8 @@ class HealthRiskEvaluator {
         
         // 生成建议
         val diseases = healthProfile?.diseases?.map { it.lowercase() } ?: emptyList()
-        val advice = generateAdvice(riskLevel, riskReasons, diseases, dishName)
+        val restrictions = healthProfile?.dietRestrictions?.map { it.lowercase() } ?: emptyList()
+        val advice = generateAdvice(riskLevel, riskReasons, diseases, restrictions, dishName)
         
         return HealthRiskResult(
             riskLevel = riskLevel,
@@ -367,9 +368,10 @@ class HealthRiskEvaluator {
         riskLevel: RiskLevel,
         reasons: List<String>,
         diseases: List<String>,
+        restrictions: List<String>,
         dishName: String
     ): String {
-        return when (riskLevel) {
+        val base = when (riskLevel) {
             RiskLevel.HIGH -> {
                 val diseaseHint = if (diseases.isNotEmpty()) {
                     "可能加重您的${diseases.first()}风险"
@@ -389,6 +391,9 @@ class HealthRiskEvaluator {
                 "✅ 较为健康，适合老年人食用"
             }
         }
+        if (restrictions.isEmpty()) return base
+        val r = restrictions.joinToString("、")
+        return if (riskLevel == RiskLevel.HIGH) base else "$base（您设置了：$r）"
     }
 }
 

@@ -70,9 +70,10 @@ fun VoiceDiaryScreen(
     // 默认使用Android识别器，因为它立即可用且是真实的识别
     var useAndroidRecognizer by remember { mutableStateOf(true) }
     
-    val diaryEntries by db.diaryEntryDao().getAll()
-        .map { list -> list.map { it.toDiaryEntry() } }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val diaryEntriesFlow = remember(db) {
+        db.diaryEntryDao().getAll().map { list -> list.map { it.toDiaryEntry() } }
+    }
+    val diaryEntries by diaryEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     
     // 录音权限请求Launcher
     val audioPermissionLauncher = rememberLauncherForActivityResult(
