@@ -64,14 +64,19 @@ class FridgeViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 扫描冰箱图片
      */
-    fun scanFridge(bitmap: Bitmap) {
+    fun scanFridge(bitmap: Bitmap, highAccuracy: Boolean = false) {
         viewModelScope.launch {
             _scanState.value = ScanState.Scanning
             
-            when (val result = repository.scanFridge(bitmap)) {
+            when (val result = repository.scanFridge(bitmap, highAccuracy)) {
                 is ScanResult.Success -> {
+                    val hint = when {
+                        result.unknownCount > 0 -> "（${result.unknownCount}种看不清，建议补拍或点“再识别一次”）"
+                        result.wasUpgraded -> "（已使用更准确识别）"
+                        else -> ""
+                    }
                     _scanState.value = ScanState.Success(
-                        message = "识别成功！找到${result.itemCount}种食材",
+                        message = "识别成功！找到${result.itemCount}种食材$hint",
                         itemCount = result.itemCount
                     )
                 }

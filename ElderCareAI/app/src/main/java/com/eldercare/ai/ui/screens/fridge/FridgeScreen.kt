@@ -56,6 +56,7 @@ fun FridgeScreen(
     
     // 拍照的临时 URI
     var tempImageUri by remember { mutableStateOf<Uri?>(null) }
+    var lastBitmap by remember { mutableStateOf<Bitmap?>(null) }
     
     val scanState by viewModel.scanState.collectAsStateWithLifecycle()
     val fridgeItems by viewModel.fridgeItems.collectAsStateWithLifecycle()
@@ -71,6 +72,7 @@ fun FridgeScreen(
                     val bitmap = BitmapFactory.decodeStream(inputStream)
                     inputStream?.close()
                     if (bitmap != null) {
+                        lastBitmap = bitmap
                         viewModel.scanFridge(bitmap)
                     }
                 } catch (e: Exception) {
@@ -134,6 +136,7 @@ fun FridgeScreen(
                     inputStream?.close()
                     
                     if (bitmap != null) {
+                        lastBitmap = bitmap
                         viewModel.scanFridge(bitmap)
                     }
                 } catch (e: Exception) {
@@ -155,6 +158,7 @@ fun FridgeScreen(
                     inputStream?.close()
                     
                     if (bitmap != null) {
+                        lastBitmap = bitmap
                         viewModel.scanFridge(bitmap)
                     }
                 } catch (e: Exception) {
@@ -479,6 +483,24 @@ fun FridgeScreen(
                 }
             }
             else -> {}
+        }
+
+        if (lastBitmap != null && scanState !is ScanState.Scanning) {
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { viewModel.scanFridge(lastBitmap!!, highAccuracy = true) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "再识别一次",
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("再识别一次（更准确）")
+            }
         }
         
         Spacer(modifier = Modifier.height(32.dp))
