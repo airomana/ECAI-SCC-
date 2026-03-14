@@ -14,7 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.entity.DiaryEntryEntity
 import com.eldercare.ai.ui.theme.ElderCareAITheme
@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,6 +47,10 @@ fun VoiceDiaryScreen(
     var isProcessing by remember { mutableStateOf(false) }
     var isGeneratingResponse by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var startAfterPermission by remember { mutableStateOf(false) }
+    var lastSavedContent by remember { mutableStateOf("") }
+    var lastTranscribedSampleIndex by remember { mutableStateOf(0) }
+    var streamingJob by remember { mutableStateOf<Job?>(null) }
     
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
@@ -63,42 +68,82 @@ fun VoiceDiaryScreen(
             null
         }
     }
-    
+
     // 选择使用哪种识别方式
     // true = 使用Android原生SpeechRecognizer（真实识别，需要网络，立即可用）
     // false = 使用Whisper（需要模型文件，离线，需要集成whisper.cpp）
-    // 默认使用Android识别器，因为它立即可用且是真实的识别
-    var useAndroidRecognizer by remember { mutableStateOf(true) }
-    
+    // 为避免部分设备上 SpeechRecognizer 主线程限制问题，
+    // 默认关闭 Android 原生识别，统一走 Whisper 流程（未集成模型时会使用模拟文本）。
+    var useAndroidRecognizer by remember { mutableStateOf(false) }
+
+    // 避免在组合中直接调用 Flow 操作符，使用 remember 包裹 Flow 链
     val diaryEntriesFlow = remember(db) {
-        db.diaryEntryDao().getAll().map { list -> list.map { it.toDiaryEntry() } }
+        db.diaryEntryDao().getAll()
+            .map { list -> list.map { it.toDiaryEntry() } }
     }
-    val diaryEntries by diaryEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val diaryEntries by diaryEntriesFlow.collectAsState(initial = emptyList())
     
     // 录音权限请求Launcher
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            // 权限已授予，开始录音
-            scope.launch(Dispatchers.IO) {
-                val started = audioRecorder.startRecording()
-                withContext(Dispatchers.Main) {
-                    if (started) {
-                        isRecording = true
-                        recordedText = ""
-                        errorMessage = null
-                    } else {
-                        errorMessage = "无法启动录音，请重试"
-                    }
-                }
-            }
+            startAfterPermission = true
         } else {
             // 权限被拒绝
             errorMessage = "需要录音权限才能使用此功能，请在设置中授予权限"
         }
     }
     
+    fun saveDiary(content: String, auto: Boolean) {
+        if (content.isBlank()) return
+        if (content == lastSavedContent) {
+            if (!auto) {
+                errorMessage = "该内容已保存"
+            }
+            return
+        }
+        scope.launch {
+            withContext(Dispatchers.Main) {
+                isGeneratingResponse = true
+            }
+            val emotion = analyzeEmotionFromText(content)
+            val currentUser = try {
+                userService?.getCurrentUser()
+            } catch (e: Exception) {
+                android.util.Log.w("VoiceDiary", "获取用户信息失败", e)
+                null
+            }
+            val userName = currentUser?.nickname?.takeIf { it.isNotBlank() }
+            val aiResponse = try {
+                llmService.generateDiaryResponse(
+                    diaryContent = content,
+                    emotion = emotion,
+                    userName = userName
+                ) ?: generateLocalDiaryResponse(content, emotion, userName)
+            } catch (e: Exception) {
+                android.util.Log.w("VoiceDiary", "LLM生成回应失败，使用本地模板", e)
+                generateLocalDiaryResponse(content, emotion, userName)
+            }
+            withContext(Dispatchers.IO) {
+                db.diaryEntryDao().insert(
+                    DiaryEntryEntity(
+                        date = System.currentTimeMillis(),
+                        content = content,
+                        emotion = emotion,
+                        aiResponse = aiResponse
+                    )
+                )
+            }
+            withContext(Dispatchers.Main) {
+                isGeneratingResponse = false
+                lastSavedContent = content
+                errorMessage = if (auto) "已自动生成记录" else null
+                ttsService.speak(aiResponse, priority = 1)
+            }
+        }
+    }
+
     // 启动录音的辅助函数
     fun launchRecording() {
         // 如果已经在录音，先强制停止
@@ -106,6 +151,9 @@ fun VoiceDiaryScreen(
             android.util.Log.w("VoiceDiary", "已经在录音，先强制停止")
             scope.launch(Dispatchers.IO) {
                 audioRecorder.forceStop()
+                if (useAndroidRecognizer && androidSpeechRecognizer.isAvailable()) {
+                    androidSpeechRecognizer.stop()
+                }
                 withContext(Dispatchers.Main) {
                     isRecording = false
                     isProcessing = false
@@ -132,27 +180,24 @@ fun VoiceDiaryScreen(
                     recordedText = ""
                     errorMessage = null
                     
-                    scope.launch(Dispatchers.IO) {
+                    scope.launch(Dispatchers.Main) {
                         try {
                             val result = androidSpeechRecognizer.recognize()
-                            withContext(Dispatchers.Main) {
-                                isRecording = false
-                                isProcessing = false
-                                if (result.isNullOrBlank()) {
-                                    recordedText = "识别失败，请重试"
-                                    errorMessage = "未能识别到语音，请重试"
-                                } else {
-                                    recordedText = result
-                                    errorMessage = null
-                                }
+                            isRecording = false
+                            isProcessing = false
+                            if (result.isNullOrBlank()) {
+                                recordedText = "识别失败，请重试"
+                                errorMessage = "未能识别到语音，请重试"
+                            } else {
+                                recordedText = result
+                                errorMessage = null
+                                saveDiary(result, true)
                             }
                         } catch (e: Exception) {
                             android.util.Log.e("VoiceDiary", "Android识别失败", e)
-                            withContext(Dispatchers.Main) {
-                                isRecording = false
-                                isProcessing = false
-                                errorMessage = "识别失败：${e.message}"
-                            }
+                            isRecording = false
+                            isProcessing = false
+                            errorMessage = "识别失败：${e.message}"
                         }
                     }
                 } else {
@@ -160,7 +205,7 @@ fun VoiceDiaryScreen(
                     android.util.Log.d("VoiceDiary", "Android识别器不可用，使用Whisper录音")
                     useAndroidRecognizer = false
                     
-                    // 使用Whisper（需要录音）
+                    // 使用Whisper（需要录音 + 伪流式识别）
                     scope.launch(Dispatchers.IO) {
                         // 确保之前的录音已停止
                         audioRecorder.forceStop()
@@ -172,6 +217,65 @@ fun VoiceDiaryScreen(
                                 isRecording = true
                                 recordedText = ""
                                 errorMessage = null
+                                lastTranscribedSampleIndex = 0
+                                
+                                // 启动伪流式识别协程：录音过程中每隔一段时间追加识别结果
+                                streamingJob?.cancel()
+                                streamingJob = scope.launch(Dispatchers.IO) {
+                                    while (true) {
+                                        // 轮询间隔，可根据需要微调
+                                        kotlinx.coroutines.delay(1500)
+                                        
+                                        // 如果已经停止录音，则结束流式任务
+                                        if (!isRecording) {
+                                            break
+                                        }
+                                        
+                                        // 只在Whisper真正可用时做流式识别，避免与模拟模式重复
+                                        if (!whisperProcessor.isNativeLibraryLoaded() || !whisperProcessor.isInitialized()) {
+                                            continue
+                                        }
+                                        
+                                        val snapshot = audioRecorder.getSnapshot() ?: continue
+                                        
+                                        // 至少累积一定新数据再识别（这里约 0.5 秒）
+                                        if (snapshot.size <= lastTranscribedSampleIndex + 8000) {
+                                            continue
+                                        }
+                                        
+                                        val start = maxOf(0, lastTranscribedSampleIndex - 16000) // 回看1秒上下文
+                                        if (start >= snapshot.size) continue
+                                        val segment = snapshot.copyOfRange(start, snapshot.size)
+                                        
+                                        val partial = try {
+                                            whisperProcessor.transcribe(segment)
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("VoiceDiary", "Streaming transcription failed", e)
+                                            null
+                                        }
+                                        
+                                        if (partial.isNullOrBlank()) {
+                                            lastTranscribedSampleIndex = snapshot.size
+                                            continue
+                                        }
+                                        
+                                        withContext(Dispatchers.Main) {
+                                            // 如果新结果以当前文本开头，只追加后缀，减少闪烁
+                                            val newText = if (partial.startsWith(recordedText)) {
+                                                partial.removePrefix(recordedText)
+                                            } else {
+                                                // 否则直接使用partial，避免越积越乱
+                                                partial
+                                            }
+                                            
+                                            if (newText.isNotBlank()) {
+                                                recordedText = recordedText + newText
+                                            }
+                                        }
+                                        
+                                        lastTranscribedSampleIndex = snapshot.size
+                                    }
+                                }
                             } else {
                                 errorMessage = "无法启动录音，请重试"
                             }
@@ -183,6 +287,13 @@ fun VoiceDiaryScreen(
                 // 请求权限
                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
+        }
+    }
+
+    LaunchedEffect(startAfterPermission) {
+        if (startAfterPermission) {
+            startAfterPermission = false
+            launchRecording()
         }
     }
     
@@ -246,6 +357,7 @@ fun VoiceDiaryScreen(
                 // 如果使用Android识别器，停止识别
                 if (useAndroidRecognizer && androidSpeechRecognizer.isAvailable()) {
                     androidSpeechRecognizer.stop()
+                    audioRecorder.forceStop()
                     isRecording = false
                     isProcessing = false
                     return@VoiceRecordingSection
@@ -261,6 +373,10 @@ fun VoiceDiaryScreen(
                 isProcessing = true
                 errorMessage = null
                 android.util.Log.d("VoiceDiary", "停止录音，设置isProcessing=true")
+                
+                // 停止流式识别任务
+                streamingJob?.cancel()
+                streamingJob = null
                 
                 // 在后台线程处理录音和识别
                 scope.launch(Dispatchers.IO) {
@@ -326,6 +442,7 @@ fun VoiceDiaryScreen(
                             } else {
                                 recordedText = transcription
                                 errorMessage = null
+                                saveDiary(transcription, true)
                             }
                             isProcessing = false
                             android.util.Log.d("VoiceDiary", "UI更新完成，isProcessing=false, recordedText长度=${recordedText.length}, recordedText内容: ${recordedText.take(30)}...")
@@ -341,69 +458,7 @@ fun VoiceDiaryScreen(
                 }
             },
             onSaveDiary = {
-                if (recordedText.isNotEmpty()) {
-                    scope.launch {
-                        // 显示"AI正在思考..."
-                        withContext(Dispatchers.Main) {
-                            isGeneratingResponse = true
-                        }
-                        
-                        // 改进的情感分析 - 使用更全面的关键词检测
-                        val emotion = analyzeEmotionFromText(recordedText)
-                        
-                        // 获取当前用户信息（用于个性化回应）
-                        val currentUser = try {
-                            userService?.getCurrentUser()
-                        } catch (e: Exception) {
-                            android.util.Log.w("VoiceDiary", "获取用户信息失败", e)
-                            null
-                        }
-                        val userName = currentUser?.nickname?.takeIf { it.isNotBlank() } 
-                            ?: currentUser?.phone?.takeIf { it.isNotBlank() }?.let { 
-                                // 如果只有手机号，使用"您"来称呼
-                                null
-                            }
-                        
-                        // 生成AI回应（优先使用LLM，失败则使用本地模板）
-                        var aiResponse = try {
-                            // 尝试使用LLM生成回应
-                            llmService.generateDiaryResponse(
-                                diaryContent = recordedText,
-                                emotion = emotion,
-                                userName = userName
-                            ) ?: generateLocalDiaryResponse(recordedText, emotion, userName)
-                        } catch (e: Exception) {
-                            android.util.Log.w("VoiceDiary", "LLM生成回应失败，使用本地模板", e)
-                            generateLocalDiaryResponse(recordedText, emotion, userName)
-                        }
-                        
-                        // 保存日记
-                        db.diaryEntryDao().insert(
-                            DiaryEntryEntity(
-                                date = System.currentTimeMillis(),
-                                content = recordedText,
-                                emotion = emotion,
-                                aiResponse = aiResponse
-                            )
-                        )
-                        
-                        // 隐藏"AI正在思考..."
-                        withContext(Dispatchers.Main) {
-                            isGeneratingResponse = false
-                        }
-                        
-                        // 通过TTS播报AI回应
-                        withContext(Dispatchers.Main) {
-                            ttsService.speak(aiResponse, priority = 1)
-                        }
-                        
-                        // 清空输入
-                        withContext(Dispatchers.Main) {
-                            recordedText = ""
-                            errorMessage = null
-                        }
-                    }
-                }
+                saveDiary(recordedText, false)
             }
         )
         

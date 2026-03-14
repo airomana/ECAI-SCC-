@@ -7,7 +7,10 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -51,14 +54,17 @@ class AndroidSpeechRecognizer private constructor(private val context: Context) 
      * 开始识别（异步）
      * @return 识别结果文本，失败返回null
      */
-    suspend fun recognize(): String? = suspendCancellableCoroutine { continuation ->
-        if (speechRecognizer == null || !isAvailable()) {
-            Log.e(TAG, "Speech recognizer not available")
-            continuation.resume(null)
-            return@suspendCancellableCoroutine
-        }
-        
-        val recognitionListener = object : RecognitionListener {
+    suspend fun recognize(): String? = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { continuation ->
+            if (speechRecognizer == null || !isAvailable()) {
+                Log.e(TAG, "Speech recognizer not available")
+                continuation.resume(null)
+                return@suspendCancellableCoroutine
+            }
+
+            val finished = AtomicBoolean(false)
+
+            val recognitionListener = object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.d(TAG, "Ready for speech")
             }
@@ -93,14 +99,18 @@ class AndroidSpeechRecognizer private constructor(private val context: Context) 
                     else -> "未知错误: $error"
                 }
                 Log.e(TAG, "Recognition error: $errorMessage")
-                continuation.resume(null)
+                if (finished.compareAndSet(false, true)) {
+                    continuation.resume(null)
+                }
             }
             
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val result = matches?.firstOrNull()
                 Log.d(TAG, "Recognition result: $result")
-                continuation.resume(result)
+                if (finished.compareAndSet(false, true)) {
+                    continuation.resume(result)
+                }
             }
             
             override fun onPartialResults(partialResults: Bundle?) {
@@ -120,7 +130,6 @@ class AndroidSpeechRecognizer private constructor(private val context: Context) 
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")  // 中文
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         
         try {
@@ -128,14 +137,19 @@ class AndroidSpeechRecognizer private constructor(private val context: Context) 
             Log.d(TAG, "Started listening")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start listening", e)
-            continuation.resume(null)
+            if (finished.compareAndSet(false, true)) {
+                continuation.resume(null)
+            }
         }
         
         // 取消时停止识别
         continuation.invokeOnCancellation {
-            speechRecognizer?.stopListening()
+            if (finished.compareAndSet(false, true)) {
+                speechRecognizer?.stopListening()
+            }
             speechRecognizer?.cancel()
         }
+    }
     }
     
     /**
