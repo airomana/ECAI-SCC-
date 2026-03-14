@@ -24,6 +24,7 @@ class LlmService private constructor(private val context: Context) {
         // 初始化Retrofit
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY  // 开发时使用，生产环境建议改为NONE
+            redactHeader("Authorization")
         }
         
         val okHttpClient = OkHttpClient.Builder()
@@ -240,6 +241,12 @@ class LlmService private constructor(private val context: Context) {
                 return@withContext null
             }
 
+            // 检查是否启用
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
             // 构建请求
             val request = DashScopeMultimodalRequest(
                 model = "qwen-vl-max", // 使用通义千问视觉增强版模型
@@ -249,7 +256,30 @@ class LlmService private constructor(private val context: Context) {
                             role = "user",
                             content = listOf(
                                 mapOf("image" to "data:image/jpeg;base64,$imageBase64"),
-                                mapOf("text" to "请分析这张图片中的食材。请列出所有你看到的食材名称，以及它们的类别（如蔬菜、水果、肉类、蛋奶等）。请以JSON格式返回，格式如下：[{\"name\": \"食材名\", \"category\": \"类别\"}]。不要包含任何其他文字或Markdown标记，只返回纯JSON字符串。")
+                                mapOf(
+                                    "text" to buildString {
+                                        append("你在帮一位老人整理冰箱食材。请看图识别食材，并根据外观判断新鲜程度，估算还能放几天（从今天起）。")
+                                        append("\n必须严格只输出JSON数组（不要Markdown、不要多余文字）。格式如下：")
+                                        append(
+                                            "\n[\n" +
+                                                "  {\n" +
+                                                "    \"name\": \"食材名\",\n" +
+                                                "    \"category\": \"蔬菜|水果|肉类|海鲜|蛋奶|豆制品|主食|其他\",\n" +
+                                                "    \"freshness\": \"新鲜|一般|快坏|疑似变质|未知\",\n" +
+                                                "    \"days_left\": 0,\n" +
+                                                "    \"advice\": \"一句大白话建议（20字以内）\"\n" +
+                                                "  }\n" +
+                                                "]\n"
+                                        )
+                                        append("\n规则：")
+                                        append("\n1) 如果看到发霉、渗液、明显腐烂、黑斑扩散、明显变味迹象：freshness=疑似变质，days_left=0，advice=别吃/扔掉")
+                                        append("\n2) 如果看起来已经发软、皱缩、局部烂点、明显烂斑：一律按疑似变质处理（freshness=疑似变质，days_left=0）")
+                                        append("\n3) 只有轻微表皮皱缩但没有烂斑/霉点/渗液时，才允许用“快坏”，且 days_left=0（只建议今天吃）")
+                                        append("\n4) 如果看不清或无法判断：freshness=未知，days_left=null，advice给保守建议")
+                                        append("\n5) days_left 必须和 freshness 一致：疑似变质不能给>0；快坏不能给>0")
+                                        append("\n6) 安全优先：宁可判疑似变质，也不要把可能坏的说成还能放很多天")
+                                    }
+                                )
                             )
                         )
                     )
@@ -302,6 +332,10 @@ class LlmService private constructor(private val context: Context) {
             } else {
                 val errorBody = response.errorBody()?.string()
                 Log.e(TAG, "API调用失败: ${response.code()}, $errorBody")
+                when (response.code()) {
+                    401, 403 -> throw LlmAuthException("大模型API Key无效或已过期")
+                    402, 429 -> throw LlmRateLimitException("大模型额度不足或请求频率过高")
+                }
                 return@withContext null
             }
         } catch (e: Exception) {

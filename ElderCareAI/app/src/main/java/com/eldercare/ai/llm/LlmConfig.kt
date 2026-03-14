@@ -24,7 +24,7 @@ object LlmConfig {
      * 3. 创建新的API Key
      * 4. 将API Key填入此处（建议使用环境变量或配置文件，不要硬编码）
      */
-    var API_KEY: String = "sk-7d12d090a20e408d88e00049e6d0a7a3"
+    var API_KEY: String = "sk-6b0835b8369c47c7a5e4b8fc8d2a6d79"
         private set
     
     /**
@@ -68,12 +68,7 @@ object LlmConfig {
         // 从设置中读取API密钥（如果已配置）
         val savedApiKey = settings.getLlmApiKey()
         if (savedApiKey.isNotBlank()) {
-            API_KEY = savedApiKey
-        }
-        
-        // 如果 API_KEY 为空，尝试使用默认硬编码 Key（仅供测试）
-        if (API_KEY.isBlank()) {
-            API_KEY = "sk-7d12d090a20e408d88e00049e6d0a7a3"
+            API_KEY = savedApiKey.trim()
         }
         
         // 从设置中读取模型名称（如果已配置）
@@ -88,7 +83,7 @@ object LlmConfig {
      * 建议在应用启动时或设置页面中调用
      */
     fun setApiKey(context: Context, apiKey: String) {
-        API_KEY = apiKey
+        API_KEY = apiKey.trim()
         com.eldercare.ai.data.SettingsManager.getInstance(context).setLlmApiKey(apiKey)
     }
     

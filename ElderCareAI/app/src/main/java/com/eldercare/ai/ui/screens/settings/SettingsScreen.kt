@@ -12,6 +12,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,7 @@ import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.HealthProfile
+import com.eldercare.ai.llm.LlmConfig
 import com.eldercare.ai.tts.TtsService
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import kotlinx.coroutines.launch
@@ -36,6 +39,7 @@ fun SettingsScreen(
     var showEmergencyContactDialog by remember { mutableStateOf(false) }
     var showInviteCodeDialog by remember { mutableStateOf(false) }
     var showLinkInviteCodeDialog by remember { mutableStateOf(false) }
+    var showLlmConfigDialog by remember { mutableStateOf(false) }
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager.getInstance(context) }
@@ -50,6 +54,7 @@ fun SettingsScreen(
     var fontSize by remember { mutableStateOf(settingsManager.fontSize) }
     var currentRole by remember { mutableStateOf(settingsManager.getUserRole()) }
     var currentUser by remember { mutableStateOf<com.eldercare.ai.data.entity.User?>(null) }
+    var llmEnabled by remember { mutableStateOf(settingsManager.isLlmEnabled()) }
     
     // 加载当前用户信息
     LaunchedEffect(Unit) {
@@ -195,6 +200,36 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            item {
+                val apiKeyConfigured = settingsManager.getLlmApiKey().isNotBlank()
+                SettingsSection(title = "大模型") {
+                    SettingsItemWithSwitch(
+                        icon = Icons.Default.SmartToy,
+                        title = "启用大模型",
+                        subtitle = if (llmEnabled) "已开启" else "已关闭",
+                        checked = llmEnabled,
+                        onCheckedChange = {
+                            llmEnabled = it
+                            settingsManager.setLlmEnabled(it)
+                        }
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.Key,
+                        title = "配置API Key",
+                        subtitle = if (apiKeyConfigured) "已配置" else "未配置（不配置会识别失败）",
+                        onClick = { showLlmConfigDialog = true }
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.Tune,
+                        title = "模型名称",
+                        subtitle = settingsManager.getLlmModel().takeIf { it.isNotBlank() } ?: "qwen-turbo",
+                        onClick = { showLlmConfigDialog = true }
+                    )
+                }
+            }
             
             item {
                 SettingsSection(title = "关于") {
@@ -299,6 +334,19 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+        )
+    }
+
+    if (showLlmConfigDialog) {
+        LlmConfigDialog(
+            initialApiKey = settingsManager.getLlmApiKey(),
+            initialModel = settingsManager.getLlmModel().takeIf { it.isNotBlank() } ?: "qwen-turbo",
+            onDismiss = { showLlmConfigDialog = false },
+            onSave = { apiKey, model ->
+                LlmConfig.setApiKey(context, apiKey)
+                LlmConfig.setModel(context, model)
+                showLlmConfigDialog = false
             }
         )
     }
@@ -739,4 +787,77 @@ fun SettingsScreenPreview() {
     ElderCareAITheme {
         SettingsScreen()
     }
+}
+
+@Composable
+fun LlmConfigDialog(
+    initialApiKey: String,
+    initialModel: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var apiKey by remember { mutableStateOf(initialApiKey) }
+    var model by remember { mutableStateOf(initialModel) }
+    var showApiKey by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("大模型配置") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("用于拍冰箱/拍菜单/语音日记等功能。")
+
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("DashScope API Key") },
+                    placeholder = { Text("sk-...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation()
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Checkbox(
+                        checked = showApiKey,
+                        onCheckedChange = { showApiKey = it }
+                    )
+                    Text("显示Key")
+                }
+
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text("文本模型名称") },
+                    placeholder = { Text("qwen-turbo") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Text(
+                    text = "提示：Key 配错会出现 401 InvalidApiKey。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(apiKey, model) },
+                enabled = apiKey.isNotBlank()
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }

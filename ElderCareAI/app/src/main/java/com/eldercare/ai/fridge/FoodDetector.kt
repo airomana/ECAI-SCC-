@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 import android.util.Base64
+import com.eldercare.ai.llm.LlmAuthException
+import com.eldercare.ai.llm.LlmRateLimitException
 import com.eldercare.ai.llm.LlmService
 import java.io.ByteArrayOutputStream
 import com.google.gson.Gson
@@ -65,17 +67,37 @@ class FoodDetector(private val context: Context) {
                 return@withContext emptyList()
             }
             
-            val type = object : TypeToken<List<Map<String, String>>>() {}.type
-            val resultList: List<Map<String, String>> = gson.fromJson(jsonResult, type)
+            val type = object : TypeToken<List<Map<String, Any?>>>() {}.type
+            val resultList: List<Map<String, Any?>> = gson.fromJson(jsonResult, type)
             
             resultList.map { 
+                val name = (it["name"] as? String)?.trim().takeUnless { v -> v.isNullOrBlank() } ?: "未知食材"
+                val category = (it["category"] as? String)?.trim().takeUnless { v -> v.isNullOrBlank() } ?: "其他"
+                val freshness = (it["freshness"] as? String)?.trim()
+                val advice = (it["advice"] as? String)?.trim()
+
+                val daysLeft = when (val raw = it["days_left"]) {
+                    is Number -> raw.toInt()
+                    is String -> raw.toIntOrNull()
+                    else -> null
+                }
+
                 DetectedFood(
-                    name = it["name"] ?: "未知食材",
-                    category = it["category"] ?: "其他",
+                    name = name,
+                    category = category,
                     confidence = 1.0f,
-                    boundingBox = BoundingBox(0, 0, 0, 0)
+                    boundingBox = BoundingBox(0, 0, 0, 0),
+                    freshness = freshness,
+                    daysLeft = daysLeft,
+                    advice = advice
                 )
             }
+        } catch (e: LlmAuthException) {
+            Log.e(TAG, e.message ?: "LLM认证失败", e)
+            throw e
+        } catch (e: LlmRateLimitException) {
+            Log.e(TAG, e.message ?: "LLM请求受限", e)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to detect foods", e)
             emptyList()
@@ -100,7 +122,10 @@ data class DetectedFood(
     val name: String,
     val category: String,
     val confidence: Float,
-    val boundingBox: BoundingBox
+    val boundingBox: BoundingBox,
+    val freshness: String? = null,
+    val daysLeft: Int? = null,
+    val advice: String? = null
 )
 
 /**

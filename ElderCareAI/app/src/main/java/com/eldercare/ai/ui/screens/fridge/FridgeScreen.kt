@@ -34,12 +34,21 @@ import com.eldercare.ai.ui.viewmodel.FridgeViewModel
 import com.eldercare.ai.ui.viewmodel.ScanState
 import com.eldercare.ai.ui.viewmodel.FridgeItemUi
 import com.eldercare.ai.fridge.FoodStatus
+import com.eldercare.ai.fridge.ShelfLifeCalculator
+import com.eldercare.ai.rememberElderCareDatabase
+import com.eldercare.ai.data.entity.FridgeScanEntity
+import com.eldercare.ai.data.entity.FridgeScanItemEntity
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FridgeScreen(
     onNavigateBack: () -> Unit = {},
+    onNavigateToHistory: () -> Unit = {},
     viewModel: FridgeViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -242,7 +251,16 @@ fun FridgeScreen(
                 textAlign = TextAlign.Center
             )
             
-            Spacer(modifier = Modifier.size(64.dp))
+            IconButton(
+                onClick = onNavigateToHistory,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = "历史",
+                    modifier = Modifier.size(48.dp)
+                )
+            }
         }
         
         Spacer(modifier = Modifier.height(32.dp))
@@ -590,4 +608,198 @@ fun FridgeScreenPreview() {
     ElderCareAITheme {
         FridgeScreen()
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FridgeHistoryScreen(
+    onNavigateBack: () -> Unit = {},
+    onNavigateToDetail: (Long) -> Unit = {}
+) {
+    val db = rememberElderCareDatabase()
+    val scans by db.fridgeScanDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("拍冰箱历史") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (scans.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("暂无历史记录")
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(scans, key = { it.id }) { scan ->
+                    FridgeHistoryScanCard(
+                        scan = scan,
+                        onClick = { onNavigateToDetail(scan.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FridgeHistoryScanCard(
+    scan: FridgeScanEntity,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = formatDateTime(scan.scannedAt),
+                style = MaterialTheme.typography.titleLarge
+            )
+            Text(
+                text = "识别到 ${scan.itemCount} 种食材",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            if (scan.note.isNotBlank()) {
+                Text(
+                    text = scan.note,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FridgeHistoryDetailScreen(
+    scanId: Long,
+    onNavigateBack: () -> Unit = {}
+) {
+    val db = rememberElderCareDatabase()
+    val scan by db.fridgeScanDao().getById(scanId).collectAsStateWithLifecycle(initialValue = null)
+    val items by db.fridgeScanItemDao().getByScanId(scanId).collectAsStateWithLifecycle(initialValue = emptyList())
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("历史详情") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            Text(
+                text = scan?.let { formatDateTime(it.scannedAt) } ?: "加载中...",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = scan?.let { "本次识别到 ${it.itemCount} 种食材" } ?: "",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("没有找到该次记录的食材")
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(items, key = { it.id }) { item ->
+                        FridgeHistoryItemCard(item = item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FridgeHistoryItemCard(item: FridgeScanItemEntity) {
+    val currentTime = System.currentTimeMillis()
+    val status = ShelfLifeCalculator.calculateFoodStatus(item.expiryAt, currentTime)
+    val statusText = ShelfLifeCalculator.getStatusText(item.expiryAt, currentTime)
+    val adviceText = ShelfLifeCalculator.getAdviceText(item.name, item.category, item.expiryAt, currentTime)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (status) {
+                FoodStatus.EXPIRED -> MaterialTheme.colorScheme.errorContainer
+                FoodStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondaryContainer
+                FoodStatus.FRESH -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        ),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodyLarge,
+                color = when (status) {
+                    FoodStatus.EXPIRED -> MaterialTheme.colorScheme.error
+                    FoodStatus.EXPIRING_SOON -> MaterialTheme.colorScheme.secondary
+                    FoodStatus.FRESH -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            if (adviceText.isNotBlank()) {
+                Text(
+                    text = adviceText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+private fun formatDateTime(epochMs: Long): String {
+    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Shanghai")
+    }
+    return sdf.format(Date(epochMs))
 }

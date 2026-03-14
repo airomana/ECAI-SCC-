@@ -37,11 +37,6 @@ class MainActivity : ComponentActivity() {
             // 初始化LLM配置
             LlmConfig.initialize(this)
             
-            // 设置API密钥（如果还没有配置）
-            if (!LlmConfig.isConfigured()) {
-                LlmConfig.setApiKey(this, "sk-634807447c514841a647f2e90b244389")
-            }
-            
             enableEdgeToEdge()
             setContent {
                 ElderCareAITheme {
