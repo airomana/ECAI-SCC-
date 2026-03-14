@@ -52,8 +52,10 @@ class FridgeRepository(
                 return ScanResult.Error("大模型未配置API Key，请到设置里填写")
             }
 
-            // 0. 清空旧数据（根据用户需求：每次拍照只显示本次结果）
-            fridgeItemDao.deleteAll()
+            val quality = foodDetector.assessImageQuality(bitmap)
+            if (!quality.ok) {
+                return ScanResult.Empty(quality.message ?: "看不清或没对准冰箱内部，建议补拍")
+            }
             
             // 1. 检测食材
             val detection = detectFoodsWithModelLayering(bitmap, highAccuracy)
@@ -62,6 +64,9 @@ class FridgeRepository(
             if (detectedFoods.isEmpty()) {
                 return ScanResult.Empty("看不清或没对准冰箱内部，建议补拍")
             }
+
+            // 0. 清空旧数据（根据用户需求：每次拍照只显示本次结果）
+            fridgeItemDao.deleteAll()
             
             // 2. 计算保质期并保存到数据库
             val currentTime = System.currentTimeMillis()
