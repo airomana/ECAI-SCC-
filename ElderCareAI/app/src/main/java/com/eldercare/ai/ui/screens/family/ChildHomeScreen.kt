@@ -44,14 +44,18 @@ fun ChildHomeScreen(
     val settingsManager = remember { SettingsManager.getInstance(context) }
     val gson = remember { Gson() }
     val scope = rememberCoroutineScope()
+    val currentUserId = settingsManager.getCurrentUserId() ?: 0L
+    val currentUser by db.userDao().getByIdFlow(currentUserId).collectAsStateWithLifecycle(initialValue = null)
+    val pendingLinkRequests by db.familyLinkRequestDao().getByChildAndStatus(currentUserId, "pending").collectAsStateWithLifecycle(initialValue = emptyList())
+    val isLinked = currentUser?.familyId != null
     val diaryEntries by db.diaryEntryDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
     val personalSituation by db.personalSituationDao().get().collectAsStateWithLifecycle(initialValue = null)
     val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val pendingRequests by db.profileEditRequestDao().getByStatus("pending").collectAsStateWithLifecycle(initialValue = emptyList())
-    val shareHealth = personalSituation?.shareHealth ?: false
-    val shareDiet = personalSituation?.shareDiet ?: false
-    val shareContacts = personalSituation?.shareContacts ?: false
+    val shareHealth = isLinked && (personalSituation?.shareHealth ?: false)
+    val shareDiet = isLinked && (personalSituation?.shareDiet ?: false)
+    val shareContacts = isLinked && (personalSituation?.shareContacts ?: false)
     var showSuggestDialog by remember { mutableStateOf(false) }
     var showSubmittedDialog by remember { mutableStateOf(false) }
     
@@ -84,7 +88,32 @@ fun ChildHomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 健康档案卡片
+            if (!isLinked) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("尚未绑定父母", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (pendingLinkRequests.isNotEmpty()) "绑定申请已提交，等待父母确认" else "请在设置中输入父母邀请码发起绑定申请",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onNavigateToSettings,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("去设置")
+                        }
+                    }
+                }
+                return@Column
+            }
+
             ChildHealthProfileCard(
                 healthProfile = if (shareHealth) healthProfile else null,
                 shareHealth = shareHealth,

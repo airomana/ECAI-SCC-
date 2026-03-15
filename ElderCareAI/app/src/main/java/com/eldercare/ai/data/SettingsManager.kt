@@ -26,6 +26,8 @@ class SettingsManager(context: Context) {
         private const val KEY_LLM_ENABLED = "llm_enabled"
         private const val KEY_LLM_API_KEY = "llm_api_key"
         private const val KEY_LLM_MODEL = "llm_model"
+        private const val KEY_SMS_GATEWAY_URL = "sms_gateway_url"
+        private const val KEY_SMS_GATEWAY_TOKEN = "sms_gateway_token"
         private const val KEY_USER_ROLE = "user_role"  // "parent" 或 "child"
         private const val KEY_CURRENT_USER_ID = "current_user_id"  // 当前登录用户ID
         
@@ -71,6 +73,22 @@ class SettingsManager(context: Context) {
     
     fun setLlmModel(model: String) {
         prefs.edit().putString(KEY_LLM_MODEL, model).apply()
+    }
+
+    fun getSmsGatewayUrl(): String {
+        return prefs.getString(KEY_SMS_GATEWAY_URL, "") ?: ""
+    }
+
+    fun setSmsGatewayUrl(url: String) {
+        prefs.edit().putString(KEY_SMS_GATEWAY_URL, url).apply()
+    }
+
+    fun getSmsGatewayToken(): String {
+        return prefs.getString(KEY_SMS_GATEWAY_TOKEN, "") ?: ""
+    }
+
+    fun setSmsGatewayToken(token: String) {
+        prefs.edit().putString(KEY_SMS_GATEWAY_TOKEN, token).apply()
     }
     
     // 用户角色管理

@@ -4,8 +4,11 @@ import android.content.Context
 import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.dao.UserDao
 import com.eldercare.ai.data.dao.FamilyRelationDao
+import com.eldercare.ai.data.dao.FamilyLinkRequestDao
 import com.eldercare.ai.data.entity.User
 import com.eldercare.ai.data.entity.FamilyRelation
+import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
+import java.security.SecureRandom
 import java.util.UUID
 
 /**
@@ -15,14 +18,26 @@ import java.util.UUID
 class UserService(
     private val userDao: UserDao,
     private val familyRelationDao: FamilyRelationDao,
+    private val familyLinkRequestDao: FamilyLinkRequestDao,
     private val settingsManager: SettingsManager
 ) {
     
     /**
-     * 生成6位数字邀请码
+     * 生成较复杂的邀请码（避免纯6位数字过于简单）
      */
-    private fun generateInviteCode(): String {
-        return (100000..999999).random().toString()
+    private suspend fun generateInviteCode(): String {
+        val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        val random = SecureRandom()
+        repeat(10) {
+            val code = buildString {
+                repeat(10) {
+                    append(alphabet[random.nextInt(alphabet.length)])
+                }
+            }
+            val existing = userDao.getByInviteCode(code)
+            if (existing == null) return code
+        }
+        return UUID.randomUUID().toString().replace("-", "").take(12).uppercase()
     }
     
     /**
@@ -88,7 +103,7 @@ class UserService(
             // 保存当前用户信息
             settingsManager.setCurrentUserId(userId)
             settingsManager.setUserRole(role)
-            return RegisterResult.Success(savedUser, code)
+            return RegisterResult.Success(savedUser, inviteCode = code, linkPending = false)
         } else {
             // 子女端注册：需要验证邀请码
             if (inviteCode.isNullOrBlank()) {
@@ -104,12 +119,9 @@ class UserService(
                 return RegisterResult.Error("邀请码无效")
             }
             
-            val familyId = parentUser.familyId ?: return RegisterResult.Error("邀请码无效")
-            
             val user = User(
                 phone = phone,
                 role = role,
-                familyId = familyId,
                 createdAt = now,
                 lastLoginAt = now
             )
@@ -117,19 +129,21 @@ class UserService(
             val userId = userDao.insert(user)
             val savedUser = user.copy(id = userId)
             
-            // 创建家庭关系
-            val relation = FamilyRelation(
-                familyId = familyId,
-                parentUserId = parentUser.id,
-                childUserId = userId
+            // 创建绑定申请（需要父母确认后才真正绑定）
+            familyLinkRequestDao.insert(
+                FamilyLinkRequestEntity(
+                    parentUserId = parentUser.id,
+                    childUserId = userId,
+                    status = "pending",
+                    createdAt = now
+                )
             )
-            familyRelationDao.insert(relation)
             
             // 保存当前用户信息（修复bug：子女端注册后也要保存角色）
             settingsManager.setCurrentUserId(userId)
             settingsManager.setUserRole(role)
             
-            return RegisterResult.Success(savedUser, null)
+            return RegisterResult.Success(savedUser, inviteCode = null, linkPending = true)
         }
     }
     
@@ -195,21 +209,19 @@ class UserService(
             return LinkResult.Error("邀请码无效")
         }
         
-        val familyId = parentUser.familyId ?: return LinkResult.Error("邀请码无效")
-        
-        // 更新子女用户，关联到家庭
-        val updatedChildUser = childUser.copy(familyId = familyId)
-        userDao.update(updatedChildUser)
-        
-        // 创建家庭关系
-        val relation = FamilyRelation(
-            familyId = familyId,
-            parentUserId = parentUser.id,
-            childUserId = userId
+        val existing = familyLinkRequestDao.getPending(parentUser.id, userId, "pending")
+        if (existing != null) {
+            return LinkResult.Pending
+        }
+        familyLinkRequestDao.insert(
+            FamilyLinkRequestEntity(
+                parentUserId = parentUser.id,
+                childUserId = userId,
+                status = "pending",
+                createdAt = System.currentTimeMillis()
+            )
         )
-        familyRelationDao.insert(relation)
-        
-        return LinkResult.Success(updatedChildUser)
+        return LinkResult.Pending
     }
     
     /**
@@ -236,7 +248,7 @@ class UserService(
  * 注册结果
  */
 sealed class RegisterResult {
-    data class Success(val user: User, val inviteCode: String?) : RegisterResult()
+    data class Success(val user: User, val inviteCode: String?, val linkPending: Boolean) : RegisterResult()
     data class Error(val message: String) : RegisterResult()
 }
 
@@ -252,6 +264,6 @@ sealed class LoginResult {
  * 关联家庭结果
  */
 sealed class LinkResult {
-    data class Success(val user: User) : LinkResult()
+    data object Pending : LinkResult()
     data class Error(val message: String) : LinkResult()
 }

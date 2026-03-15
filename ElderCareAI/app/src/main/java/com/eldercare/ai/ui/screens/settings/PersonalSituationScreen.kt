@@ -55,6 +55,8 @@ import com.eldercare.ai.data.entity.EmergencyContactEntity
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
+import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
+import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.model.ProfileEditPayload
 import com.eldercare.ai.rememberElderCareDatabase
 import com.google.gson.Gson
@@ -66,20 +68,22 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PersonalSituationScreen(
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    onboarding: Boolean = false
 ) {
     val db = rememberElderCareDatabase()
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager.getInstance(context) }
-    val role = remember { settingsManager.getUserRole() }
-    val currentUserId = remember { settingsManager.getCurrentUserId() ?: 0L }
+    val role = settingsManager.getUserRole()
+    val currentUserId = settingsManager.getCurrentUserId() ?: 0L
     val gson = remember { Gson() }
 
     val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
     val personalSituation by db.personalSituationDao().get().collectAsStateWithLifecycle(initialValue = null)
     val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val pendingRequests by db.profileEditRequestDao().getByStatus("pending").collectAsStateWithLifecycle(initialValue = emptyList())
+    val pendingLinkRequests by db.familyLinkRequestDao().getByParentAndStatus(currentUserId, "pending").collectAsStateWithLifecycle(initialValue = emptyList())
 
     var showBasicDialog by remember { mutableStateOf(false) }
     var showHealthDialog by remember { mutableStateOf(false) }
@@ -89,6 +93,13 @@ fun PersonalSituationScreen(
     var showContactDialog by remember { mutableStateOf(false) }
     var showDeleteContactConfirm by remember { mutableStateOf<EmergencyContactEntity?>(null) }
     var requestHandling by remember { mutableStateOf<ProfileEditRequestEntity?>(null) }
+    var linkRequestHandling by remember { mutableStateOf<FamilyLinkRequestEntity?>(null) }
+
+    LaunchedEffect(onboarding) {
+        if (onboarding) {
+            showBasicDialog = true
+        }
+    }
 
     val completion = remember(healthProfile, personalSituation, contacts) {
         var filled = 0
@@ -143,6 +154,28 @@ fun PersonalSituationScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (role == "parent" && pendingLinkRequests.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.People,
+                                        contentDescription = "待确认",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                    Text("有 ${pendingLinkRequests.size} 个子女申请关联待您确认")
+                                }
+                                TextButton(onClick = { linkRequestHandling = pendingLinkRequests.firstOrNull() }) {
+                                    Text("去处理")
+                                }
+                            }
+                        }
                         if (role == "parent" && pendingRequests.isNotEmpty()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -577,6 +610,74 @@ fun PersonalSituationScreen(
                 }
             )
         }
+    }
+
+    val linkReq = linkRequestHandling
+    if (role == "parent" && linkReq != null) {
+        var childPhone by remember { mutableStateOf("") }
+        var childRole by remember { mutableStateOf("") }
+        LaunchedEffect(linkReq.id) {
+            val childUser = db.userDao().getById(linkReq.childUserId)
+            childPhone = childUser?.phone ?: ""
+            childRole = childUser?.role ?: ""
+        }
+
+        AlertDialog(
+            onDismissRequest = { linkRequestHandling = null },
+            title = { Text("关联申请") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("子女账号：${childPhone.ifBlank { "未知" }}")
+                    Text(
+                        text = "同意后，子女端即可查看您授权共享的信息",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val parentUser = db.userDao().getById(currentUserId)
+                            val familyId = parentUser?.familyId
+                            if (familyId.isNullOrBlank()) {
+                                linkRequestHandling = null
+                                return@launch
+                            }
+                            val childUser = db.userDao().getById(linkReq.childUserId)
+                            if (childUser != null && childUser.familyId == null) {
+                                db.userDao().update(childUser.copy(familyId = familyId))
+                            }
+                            db.familyRelationDao().insert(
+                                FamilyRelation(
+                                    familyId = familyId,
+                                    parentUserId = currentUserId,
+                                    childUserId = linkReq.childUserId,
+                                    linkedAt = System.currentTimeMillis()
+                                )
+                            )
+                            db.familyLinkRequestDao().update(
+                                linkReq.copy(status = "accepted", handledAt = System.currentTimeMillis())
+                            )
+                        }
+                        linkRequestHandling = null
+                    }
+                ) { Text("同意") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            db.familyLinkRequestDao().update(
+                                linkReq.copy(status = "rejected", handledAt = System.currentTimeMillis())
+                            )
+                        }
+                        linkRequestHandling = null
+                    }
+                ) { Text("拒绝") }
+            }
+        )
     }
 
     LaunchedEffect(role, healthProfile, personalSituation) {

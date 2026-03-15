@@ -18,6 +18,7 @@ import com.eldercare.ai.data.dao.FamilyRelationDao
 import com.eldercare.ai.data.dao.PersonalSituationDao
 import com.eldercare.ai.data.dao.EmergencyContactDao
 import com.eldercare.ai.data.dao.ProfileEditRequestDao
+import com.eldercare.ai.data.dao.FamilyLinkRequestDao
 import com.eldercare.ai.data.entity.Dish
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.data.entity.FridgeScanEntity
@@ -29,13 +30,14 @@ import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.EmergencyContactEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
+import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
 import com.eldercare.ai.data.converters.Converters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 const val ELDER_CARE_DB_NAME = "elder_care_db"
-const val ELDER_CARE_DB_VERSION = 5
+const val ELDER_CARE_DB_VERSION = 6
 
 @Database(
     entities = [
@@ -49,7 +51,8 @@ const val ELDER_CARE_DB_VERSION = 5
         FamilyRelation::class,
         PersonalSituationEntity::class,
         EmergencyContactEntity::class,
-        ProfileEditRequestEntity::class
+        ProfileEditRequestEntity::class,
+        FamilyLinkRequestEntity::class
     ],
     version = ELDER_CARE_DB_VERSION,
     exportSchema = false
@@ -68,6 +71,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
     abstract fun personalSituationDao(): PersonalSituationDao
     abstract fun emergencyContactDao(): EmergencyContactDao
     abstract fun profileEditRequestDao(): ProfileEditRequestDao
+    abstract fun familyLinkRequestDao(): FamilyLinkRequestDao
 
     companion object {
         @Volatile
@@ -289,6 +293,35 @@ abstract class ElderCareDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    android.util.Log.d("ElderCareDatabase", "Starting migration from version 5 to 6")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS family_link_request (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            parentUserId INTEGER NOT NULL DEFAULT 0,
+                            childUserId INTEGER NOT NULL DEFAULT 0,
+                            status TEXT NOT NULL DEFAULT 'pending',
+                            createdAt INTEGER NOT NULL DEFAULT 0,
+                            handledAt INTEGER NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_link_request_parentUserId ON family_link_request(parentUserId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_link_request_childUserId ON family_link_request(childUserId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_family_link_request_status ON family_link_request(status)")
+
+                    android.util.Log.d("ElderCareDatabase", "Migration completed successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("ElderCareDatabase", "Migration failed", e)
+                    throw e
+                }
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope
@@ -301,7 +334,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
                         ElderCareDatabase::class.java,
                         ELDER_CARE_DB_NAME
                     )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .addCallback(ElderCareDatabaseCallback(scope))
                     .fallbackToDestructiveMigrationOnDowngrade() // 降级时重建数据库
                     .allowMainThreadQueries() // 临时允许主线程查询，避免启动阻塞

@@ -1,16 +1,20 @@
 package com.eldercare.ai.auth
 
+import com.eldercare.ai.data.SettingsManager
 import kotlinx.coroutines.delay
-import java.util.Random
+import java.security.SecureRandom
 
 /**
  * 验证码服务
- * 生成和验证验证码（模拟实现，实际应该通过短信服务发送）
+ * 生成、发送、验证验证码
  */
-class VerificationCodeService {
+class VerificationCodeService(
+    private val settingsManager: SettingsManager
+) {
     
     private val codeCache = mutableMapOf<String, CodeInfo>()
-    private val random = Random()
+    private val random = SecureRandom()
+    private val smsGatewayClient = SmsGatewayClient()
     
     data class CodeInfo(
         val code: String,
@@ -19,16 +23,15 @@ class VerificationCodeService {
     )
     
     companion object {
-        private const val CODE_LENGTH = 6
         private const val CODE_EXPIRE_MINUTES = 5L
         private const val CODE_RESEND_INTERVAL_SECONDS = 60L
         
         @Volatile
         private var INSTANCE: VerificationCodeService? = null
         
-        fun getInstance(): VerificationCodeService {
+        fun getInstance(settingsManager: SettingsManager): VerificationCodeService {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: VerificationCodeService().also { INSTANCE = it }
+                INSTANCE ?: VerificationCodeService(settingsManager).also { INSTANCE = it }
             }
         }
     }
@@ -37,14 +40,18 @@ class VerificationCodeService {
      * 生成6位数字验证码
      */
     private fun generateCode(): String {
-        return (100000..999999).random().toString()
+        val v = random.nextInt(900000) + 100000
+        return v.toString()
     }
     
     /**
-     * 发送验证码（模拟实现）
-     * 实际应该调用短信服务API
+     * 发送验证码
+     * - 未配置短信网关：本地模拟（返回测试验证码，方便联调）
+     * - 配置了短信网关：调用网关发送（不返回验证码）
      */
     suspend fun sendCode(phone: String): SendCodeResult {
+        val url = settingsManager.getSmsGatewayUrl().trim()
+
         // 检查是否在重发间隔内
         val existing = codeCache[phone]
         if (existing != null) {
@@ -61,14 +68,32 @@ class VerificationCodeService {
         val code = generateCode()
         val expireTime = System.currentTimeMillis() + CODE_EXPIRE_MINUTES * 60 * 1000
         
-        // 保存验证码（实际应该通过短信发送）
+        // 先缓存，避免用户收到短信后立即校验时没有记录
         codeCache[phone] = CodeInfo(code, phone, expireTime)
+
+        if (url.isBlank()) {
+            delay(300)
+            return SendCodeResult.Success(
+                expireMinutes = CODE_EXPIRE_MINUTES.toInt(),
+                debugCode = code
+            )
+        }
         
-        // 模拟发送延迟
-        delay(500)
-        
-        // 在开发环境下，返回验证码用于测试（生产环境应该返回成功但不显示验证码）
-        return SendCodeResult.Success(code, CODE_EXPIRE_MINUTES.toInt())
+        val token = settingsManager.getSmsGatewayToken().trim().takeIf { it.isNotBlank() }
+        val result = smsGatewayClient.sendCode(
+            url = url,
+            token = token,
+            phone = phone,
+            code = code,
+            expireMinutes = CODE_EXPIRE_MINUTES.toInt()
+        )
+        return result.fold(
+            onSuccess = { SendCodeResult.Success(expireMinutes = CODE_EXPIRE_MINUTES.toInt(), debugCode = null) },
+            onFailure = { e ->
+                codeCache.remove(phone)
+                SendCodeResult.Error(e.message ?: "发送失败")
+            }
+        )
     }
     
     /**
@@ -104,6 +129,6 @@ class VerificationCodeService {
  * 发送验证码结果
  */
 sealed class SendCodeResult {
-    data class Success(val code: String, val expireMinutes: Int) : SendCodeResult()
+    data class Success(val expireMinutes: Int, val debugCode: String?) : SendCodeResult()
     data class Error(val message: String) : SendCodeResult()
 }

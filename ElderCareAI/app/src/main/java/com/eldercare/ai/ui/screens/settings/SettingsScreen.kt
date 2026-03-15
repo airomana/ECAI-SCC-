@@ -39,12 +39,13 @@ fun SettingsScreen(
     var showInviteCodeDialog by remember { mutableStateOf(false) }
     var showLinkInviteCodeDialog by remember { mutableStateOf(false) }
     var showLlmConfigDialog by remember { mutableStateOf(false) }
+    var showSmsGatewayDialog by remember { mutableStateOf(false) }
     val db = rememberElderCareDatabase()
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager.getInstance(context) }
     val ttsService = remember { TtsService.getInstance(context) }
     val userService = remember { 
-        com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), settingsManager) 
+        com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), db.familyLinkRequestDao(), settingsManager) 
     }
     
     // 读取TTS设置和角色
@@ -231,6 +232,18 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            item {
+                val smsConfigured = settingsManager.getSmsGatewayUrl().isNotBlank()
+                SettingsSection(title = "短信验证码") {
+                    SettingsItem(
+                        icon = Icons.Default.Sms,
+                        title = "短信网关",
+                        subtitle = if (smsConfigured) "已配置" else "未配置（无法发送验证码）",
+                        onClick = { showSmsGatewayDialog = true }
+                    )
+                }
+            }
             
             item {
                 SettingsSection(title = "关于") {
@@ -276,6 +289,7 @@ fun SettingsScreen(
     
     // 通过邀请码关联对话框（子女端）
     var linkErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showLinkPendingDialog by remember { mutableStateOf(false) }
     if (showLinkInviteCodeDialog) {
         LinkInviteCodeDialog(
             errorMessage = linkErrorMessage,
@@ -289,16 +303,29 @@ fun SettingsScreen(
                     if (userId != null) {
                         val result = userService.linkFamilyByInviteCode(userId, inviteCode)
                         when (result) {
-                            is com.eldercare.ai.auth.LinkResult.Success -> {
-                                currentUser = result.user
+                            is com.eldercare.ai.auth.LinkResult.Pending -> {
                                 showLinkInviteCodeDialog = false
                                 linkErrorMessage = null
+                                showLinkPendingDialog = true
                             }
                             is com.eldercare.ai.auth.LinkResult.Error -> {
                                 linkErrorMessage = result.message
                             }
                         }
                     }
+                }
+            }
+        )
+    }
+
+    if (showLinkPendingDialog) {
+        AlertDialog(
+            onDismissRequest = { showLinkPendingDialog = false },
+            title = { Text("已提交") },
+            text = { Text("绑定申请已提交，等待父母端确认后生效") },
+            confirmButton = {
+                TextButton(onClick = { showLinkPendingDialog = false }) {
+                    Text("知道了")
                 }
             }
         )
@@ -316,6 +343,69 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showSmsGatewayDialog) {
+        SmsGatewayDialog(
+            initialUrl = settingsManager.getSmsGatewayUrl(),
+            initialToken = settingsManager.getSmsGatewayToken(),
+            onDismiss = { showSmsGatewayDialog = false },
+            onSave = { url, token ->
+                settingsManager.setSmsGatewayUrl(url)
+                settingsManager.setSmsGatewayToken(token)
+                showSmsGatewayDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun SmsGatewayDialog(
+    initialUrl: String,
+    initialToken: String,
+    onDismiss: () -> Unit,
+    onSave: (url: String, token: String) -> Unit
+) {
+    var url by remember { mutableStateOf(initialUrl) }
+    var token by remember { mutableStateOf(initialToken) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("短信网关配置") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("网关URL") },
+                    placeholder = { Text("https://...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Token（可选）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Text(
+                    text = "验证码将通过网关发送到用户手机",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(url.trim(), token.trim()) }) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable
@@ -348,7 +438,7 @@ fun InviteCodeDialog(
                 }
                 
                 Text(
-                    text = "子女端注册时输入此邀请码即可关联到您的家庭",
+                    text = "子女端输入邀请码后会发起关联申请，需您确认后生效",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -388,13 +478,13 @@ fun LinkInviteCodeDialog(
                 OutlinedTextField(
                     value = inviteCode,
                     onValueChange = { 
-                        inviteCode = it
+                        inviteCode = it.trim().uppercase().take(24)
                         localErrorMessage = null
                     },
                     label = { Text("邀请码") },
-                    placeholder = { Text("请输入6位邀请码") },
+                    placeholder = { Text("请输入邀请码") },
                     keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number
+                        keyboardType = KeyboardType.Ascii
                     ),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,

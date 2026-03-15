@@ -50,6 +50,10 @@ fun FamilyGuardScreen(
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager.getInstance(context) }
     val gson = remember { Gson() }
+    val currentUserId = settingsManager.getCurrentUserId() ?: 0L
+    val currentUser by db.userDao().getByIdFlow(currentUserId).collectAsStateWithLifecycle(initialValue = null)
+    val pendingLinkRequests by db.familyLinkRequestDao().getByChildAndStatus(currentUserId, "pending").collectAsStateWithLifecycle(initialValue = emptyList())
+    val isLinked = currentUser?.familyId != null
     
     // 数据状态
     val diaryEntries by db.diaryEntryDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
@@ -60,8 +64,8 @@ fun FamilyGuardScreen(
     var showAlerts by remember { mutableStateOf(false) }
     var showSuggestDialog by remember { mutableStateOf(false) }
     var showSubmittedDialog by remember { mutableStateOf(false) }
-    val shareHealth = personalSituation?.shareHealth ?: false
-    val shareContacts = personalSituation?.shareContacts ?: false
+    val shareHealth = isLinked && (personalSituation?.shareHealth ?: false)
+    val shareContacts = isLinked && (personalSituation?.shareContacts ?: false)
     
     Scaffold(
         topBar = {
@@ -90,6 +94,32 @@ fun FamilyGuardScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (!isLinked) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("尚未绑定父母", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (pendingLinkRequests.isNotEmpty()) "绑定申请已提交，等待父母确认" else "请在设置中输入父母邀请码发起绑定申请",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("返回")
+                        }
+                    }
+                }
+                return@Column
+            }
+
             // 健康档案卡片
             HealthProfileCard(
                 healthProfile = if (shareHealth) healthProfile else null,

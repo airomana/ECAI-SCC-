@@ -9,11 +9,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.eldercare.ai.data.SettingsManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -23,9 +25,11 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
-    onLoginSuccess: () -> Unit,
+    onAuthSuccess: (next: String) -> Unit,
     userService: com.eldercare.ai.auth.UserService
 ) {
+    val context = LocalContext.current
+    val settingsManager = remember { SettingsManager.getInstance(context) }
     var phone by remember { mutableStateOf("") }
     var verificationCode by remember { mutableStateOf("") }
     var inviteCode by remember { mutableStateOf("") }
@@ -37,9 +41,12 @@ fun LoginScreen(
     var showInviteCode by remember { mutableStateOf(false) }
     var countdown by remember { mutableStateOf(0) }
     var showVerificationCode by remember { mutableStateOf(false) }
+    var showParentInviteDialog by remember { mutableStateOf(false) }
+    var registeredInviteCode by remember { mutableStateOf("") }
+    var showChildPendingDialog by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
-    val codeService = remember { com.eldercare.ai.auth.VerificationCodeService.getInstance() }
+    val codeService = remember { com.eldercare.ai.auth.VerificationCodeService.getInstance(settingsManager) }
     
     // 倒计时
     LaunchedEffect(countdown) {
@@ -121,8 +128,7 @@ fun LoginScreen(
                                 val result = codeService.sendCode(phone)
                                 when (result) {
                                     is com.eldercare.ai.auth.SendCodeResult.Success -> {
-                                        // 开发环境显示验证码，生产环境不显示
-                                        errorMessage = "验证码已发送（测试：${result.code}）"
+                                        errorMessage = result.debugCode?.let { "验证码已发送（测试：$it）" } ?: "验证码已发送"
                                         countdown = 60
                                         showVerificationCode = true
                                     }
@@ -167,8 +173,7 @@ fun LoginScreen(
                             val result = codeService.sendCode(phone)
                             when (result) {
                                 is com.eldercare.ai.auth.SendCodeResult.Success -> {
-                                    // 开发环境显示验证码，生产环境不显示
-                                    errorMessage = "验证码已发送（测试：${result.code}）"
+                                    errorMessage = result.debugCode?.let { "验证码已发送（测试：$it）" } ?: "验证码已发送"
                                     countdown = 60
                                     showVerificationCode = true
                                 }
@@ -281,13 +286,13 @@ fun LoginScreen(
             OutlinedTextField(
                 value = inviteCode,
                 onValueChange = { 
-                    inviteCode = it
+                    inviteCode = it.trim().uppercase().take(24)
                     errorMessage = null
                 },
                 label = { Text("邀请码") },
-                placeholder = { Text("请输入6位邀请码") },
+                placeholder = { Text("请输入邀请码") },
                     leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
@@ -349,11 +354,13 @@ fun LoginScreen(
                             
                             when (result) {
                                 is com.eldercare.ai.auth.RegisterResult.Success -> {
-                                    // 注册成功，显示邀请码（如果是父母端）
                                     if (result.inviteCode != null) {
-                                        errorMessage = "注册成功！您的邀请码：${result.inviteCode}"
+                                        registeredInviteCode = result.inviteCode
+                                        showParentInviteDialog = true
+                                    } else if (result.linkPending) {
+                                        showChildPendingDialog = true
                                     } else {
-                                        onLoginSuccess()
+                                        onAuthSuccess("auto")
                                     }
                                 }
                                 is com.eldercare.ai.auth.RegisterResult.Error -> {
@@ -365,7 +372,7 @@ fun LoginScreen(
                             
                             when (result) {
                                 is com.eldercare.ai.auth.LoginResult.Success -> {
-                                    onLoginSuccess()
+                                    onAuthSuccess("auto")
                                 }
                                 is com.eldercare.ai.auth.LoginResult.Error -> {
                                     errorMessage = result.message
@@ -420,5 +427,59 @@ fun LoginScreen(
                 text = if (isRegisterMode) "已有账号？去登录" else "没有账号？去注册"
             )
         }
+    }
+
+    if (showParentInviteDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("注册成功") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("请把邀请码分享给子女：")
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = registeredInviteCode,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(16.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Text(
+                        text = "下一步完善个人情况，拍菜单会更准确提醒您能不能吃、怎么吃",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showParentInviteDialog = false
+                        onAuthSuccess("parent_onboarding")
+                    }
+                ) { Text("去完善个人情况") }
+            }
+        )
+    }
+
+    if (showChildPendingDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("注册成功") },
+            text = { Text("已提交绑定申请，等待父母端确认后即可查看父母信息") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showChildPendingDialog = false
+                        onAuthSuccess("auto")
+                    }
+                ) { Text("进入子女端") }
+            }
+        )
     }
 }

@@ -31,6 +31,7 @@ import com.eldercare.ai.auth.UserService
 import com.eldercare.ai.rememberElderCareDatabase
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.launch
 
 @Composable
 fun ElderCareNavigation(
@@ -50,7 +52,7 @@ fun ElderCareNavigation(
     val userService = remember { 
         try {
             android.util.Log.d("ElderCareNavigation", "Creating UserService...")
-            UserService(db.userDao(), db.familyRelationDao(), settingsManager)
+            UserService(db.userDao(), db.familyRelationDao(), db.familyLinkRequestDao(), settingsManager)
         } catch (e: Exception) {
             android.util.Log.e("ElderCareNavigation", "Failed to create UserService", e)
             null
@@ -105,17 +107,41 @@ fun ElderCareNavigation(
         // 登录/注册页面
         composable("login") {
             if (userService != null) {
+                val scope = rememberCoroutineScope()
                 LoginScreen(
-                    onLoginSuccess = {
+                    onAuthSuccess = { next ->
                         isLoggedIn = true
                         userRole = settingsManager.getUserRole()
-                        // 根据角色导航到对应首页
-                        if (settingsManager.isParentRole()) {
-                            navController.navigate("home") {
-                                popUpTo("login") { inclusive = true }
+                        scope.launch {
+                            val target = when (next) {
+                                "parent_onboarding" -> "personal_situation?onboarding=1"
+                                else -> {
+                                    if (settingsManager.isParentRole()) {
+                                        val healthProfile = db.healthProfileDao().getOnce()
+                                        val personalSituation = db.personalSituationDao().getOnce()
+                                        val hasAnyHealthInfo = healthProfile != null && (
+                                            healthProfile.name.isNotBlank() ||
+                                                healthProfile.diseases.isNotEmpty() ||
+                                                healthProfile.allergies.isNotEmpty() ||
+                                                healthProfile.dietRestrictions.isNotEmpty()
+                                            )
+                                        val hasAnySituation = personalSituation != null && (
+                                            personalSituation.city.isNotBlank() ||
+                                                personalSituation.tastePreferences.isNotEmpty() ||
+                                                personalSituation.chewLevel.isNotBlank() ||
+                                                personalSituation.symptoms.isNotEmpty()
+                                            )
+                                        if (!hasAnyHealthInfo || !hasAnySituation) {
+                                            "personal_situation?onboarding=1"
+                                        } else {
+                                            "home"
+                                        }
+                                    } else {
+                                        "child_home"
+                                    }
+                                }
                             }
-                        } else {
-                            navController.navigate("child_home") {
+                            navController.navigate(target) {
                                 popUpTo("login") { inclusive = true }
                             }
                         }
@@ -219,7 +245,7 @@ fun ElderCareNavigation(
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToFamilyGuard = { navController.navigate("family_guard") },
-                onNavigateToPersonalSituation = { navController.navigate("personal_situation") },
+                onNavigateToPersonalSituation = { navController.navigate("personal_situation?onboarding=0") },
                 onLogout = {
                     isLoggedIn = false
                     userRole = ""
@@ -236,9 +262,14 @@ fun ElderCareNavigation(
             )
         }
 
-        composable("personal_situation") {
+        composable(
+            route = "personal_situation?onboarding={onboarding}",
+            arguments = listOf(navArgument("onboarding") { type = NavType.IntType; defaultValue = 0 })
+        ) { backStackEntry ->
+            val onboarding = (backStackEntry.arguments?.getInt("onboarding") ?: 0) == 1
             PersonalSituationScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onboarding = onboarding
             )
         }
     }
