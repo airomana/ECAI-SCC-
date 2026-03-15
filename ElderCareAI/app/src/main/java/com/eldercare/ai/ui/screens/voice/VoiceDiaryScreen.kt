@@ -62,7 +62,7 @@ fun VoiceDiaryScreen(
     val settingsManager = remember { com.eldercare.ai.data.SettingsManager.getInstance(context) }
     val userService = remember { 
         try {
-            com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), settingsManager)
+            com.eldercare.ai.auth.UserService(db.userDao(), db.familyRelationDao(), db.familyLinkRequestDao(), settingsManager)
         } catch (e: Exception) {
             android.util.Log.e("VoiceDiary", "Failed to create UserService", e)
             null
