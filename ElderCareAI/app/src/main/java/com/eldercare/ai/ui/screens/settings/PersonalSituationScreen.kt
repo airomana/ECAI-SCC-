@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -58,6 +61,8 @@ import com.eldercare.ai.data.entity.ProfileEditRequestEntity
 import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
 import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.model.ProfileEditPayload
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.rememberElderCareDatabase
 import com.google.gson.Gson
 import kotlinx.coroutines.launch
@@ -117,23 +122,15 @@ fun PersonalSituationScreen(
         (filled * 100 / total).coerceIn(0, 100)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("个人情况（详细）") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
+    ElderCareScaffold(
+        title = "个人情况（详细）",
+        onNavigateBack = onNavigateBack
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -844,7 +841,13 @@ private fun HealthInfoDialog(
         onDismissRequest = onDismiss,
         title = { Text("健康与禁忌") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Text("慢病", style = MaterialTheme.typography.titleMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     diseaseOptions.forEach { option ->

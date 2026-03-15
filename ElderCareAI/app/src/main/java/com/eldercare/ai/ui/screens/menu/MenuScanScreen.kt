@@ -45,7 +45,6 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.net.Uri
 import android.os.Build
-import androidx.compose.ui.platform.LocalContext
 import java.io.InputStream
 import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.data.SettingsManager
@@ -57,6 +56,8 @@ import com.eldercare.ai.ocr.DishKnowledgeMatcher
 import com.eldercare.ai.ocr.PaddleOcrProcessor
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.tts.TtsService
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import com.eldercare.ai.utils.ImageProcessor
 import com.eldercare.ai.utils.ImageQuality
@@ -483,38 +484,16 @@ fun MenuScanScreen(
         }
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-    ) {
-        // 顶部导航栏
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+    ElderCareScaffold(
+        title = "拍菜单",
+        onNavigateBack = onNavigateBack
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing)
         ) {
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回",
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-            
-            Text(
-                text = "拍菜单",
-                style = MaterialTheme.typography.displayMedium,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center
-            )
-            
-            Spacer(modifier = Modifier.size(64.dp))
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
         
         // 裁剪对话框
         if (showCropDialog && capturedBitmap != null) {
@@ -584,6 +563,7 @@ fun MenuScanScreen(
             )
         }
     }
+    }
 }
 
 @Composable
@@ -606,7 +586,7 @@ fun CameraSection(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
             ),
-            shape = RoundedCornerShape(16.dp)
+            shape = MaterialTheme.shapes.large
         ) {
             Box(
                 modifier = Modifier.fillMaxSize(),

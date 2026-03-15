@@ -30,6 +30,8 @@ import java.io.InputStream
 import java.io.File
 import androidx.core.content.FileProvider
 import com.eldercare.ai.ui.theme.ElderCareAITheme
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.viewmodel.FridgeViewModel
 import com.eldercare.ai.ui.viewmodel.ScanState
 import com.eldercare.ai.ui.viewmodel.FridgeItemUi
@@ -227,47 +229,21 @@ fun FridgeScreen(
         }
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-    ) {
-        // 顶部导航栏
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回",
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-            
-            Text(
-                text = "拍冰箱",
-                style = MaterialTheme.typography.displayMedium,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center
-            )
-            
-            IconButton(
-                onClick = onNavigateToHistory,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = "历史",
-                    modifier = Modifier.size(48.dp)
-                )
+    ElderCareScaffold(
+        title = "拍冰箱",
+        onNavigateBack = onNavigateBack,
+        actions = {
+            IconButton(onClick = onNavigateToHistory) {
+                Icon(imageVector = Icons.Default.History, contentDescription = "历史")
             }
         }
-        
-        Spacer(modifier = Modifier.height(32.dp))
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing)
+        ) {
         
         // 拍照和选择图片按钮
         Row(
@@ -530,6 +506,7 @@ fun FridgeScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+        }
     }
 }
 
@@ -641,17 +618,9 @@ fun FridgeHistoryScreen(
     val db = rememberElderCareDatabase()
     val scans by db.fridgeScanDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("拍冰箱历史") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
+    ElderCareScaffold(
+        title = "拍冰箱历史",
+        onNavigateBack = onNavigateBack
     ) { padding ->
         if (scans.isEmpty()) {
             Box(
@@ -667,7 +636,7 @@ fun FridgeHistoryScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(16.dp),
+                    .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(scans, key = { it.id }) { scan ->
@@ -723,23 +692,15 @@ fun FridgeHistoryDetailScreen(
     val scan by db.fridgeScanDao().getById(scanId).collectAsStateWithLifecycle(initialValue = null)
     val items by db.fridgeScanItemDao().getByScanId(scanId).collectAsStateWithLifecycle(initialValue = emptyList())
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("历史详情") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
+    ElderCareScaffold(
+        title = "历史详情",
+        onNavigateBack = onNavigateBack
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing)
         ) {
             Text(
                 text = scan?.let { formatDateTime(it.scannedAt) } ?: "加载中...",
