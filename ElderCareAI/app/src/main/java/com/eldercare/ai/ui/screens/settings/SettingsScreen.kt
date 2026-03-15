@@ -18,12 +18,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import android.widget.Toast
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.llm.LlmConfig
 import com.eldercare.ai.tts.TtsService
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import kotlinx.coroutines.launch
 
@@ -61,41 +66,15 @@ fun SettingsScreen(
         currentUser = userService.getCurrentUser()
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-    ) {
-        // 顶部导航栏
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回",
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-            
-            Text(
-                text = "设置",
-                style = MaterialTheme.typography.displayMedium,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center
-            )
-            
-            Spacer(modifier = Modifier.size(64.dp))
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        // 设置项列表
+    ElderCareScaffold(
+        title = "设置",
+        onNavigateBack = onNavigateBack
+    ) { padding ->
         LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -413,6 +392,8 @@ fun InviteCodeDialog(
     inviteCode: String,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("我的邀请码") },
@@ -428,13 +409,31 @@ fun InviteCodeDialog(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 ) {
-                    Text(
-                        text = inviteCode,
-                        style = MaterialTheme.typography.displayMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(24.dp),
-                        textAlign = TextAlign.Center
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = inviteCode,
+                            style = MaterialTheme.typography.displaySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(inviteCode))
+                                Toast.makeText(context, "邀请码已复制", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text("复制邀请码")
+                        }
+                    }
                 }
                 
                 Text(

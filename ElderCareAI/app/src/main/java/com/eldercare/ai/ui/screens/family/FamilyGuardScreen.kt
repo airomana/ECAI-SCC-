@@ -25,6 +25,8 @@ import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
 import com.eldercare.ai.data.model.ProfileEditPayload
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.map
@@ -67,31 +69,23 @@ fun FamilyGuardScreen(
     val shareHealth = isLinked && (personalSituation?.shareHealth ?: false)
     val shareContacts = isLinked && (personalSituation?.shareContacts ?: false)
     
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("子女守护中心") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showWeeklyReport = true }) {
-                        Icon(Icons.Default.Assessment, contentDescription = "周报")
-                    }
-                    IconButton(onClick = { showAlerts = true }) {
-                        Icon(Icons.Default.Warning, contentDescription = "警报")
-                    }
-                }
-            )
+    ElderCareScaffold(
+        title = "子女守护中心",
+        onNavigateBack = onNavigateBack,
+        actions = {
+            IconButton(onClick = { showWeeklyReport = true }) {
+                Icon(Icons.Default.Assessment, contentDescription = "周报")
+            }
+            IconButton(onClick = { showAlerts = true }) {
+                Icon(Icons.Default.Warning, contentDescription = "警报")
+            }
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (!isLinked) {

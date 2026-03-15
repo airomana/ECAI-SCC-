@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.data.entity.DiaryEntryEntity
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import com.eldercare.ai.whisper.AudioRecorder
 import com.eldercare.ai.whisper.WhisperProcessor
@@ -310,38 +312,17 @@ fun VoiceDiaryScreen(
         }
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-    ) {
-        // 顶部导航栏
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+    ElderCareScaffold(
+        title = "今天吃了啥",
+        onNavigateBack = onNavigateBack
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回",
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-            
-            Text(
-                text = "今天吃了啥",
-                style = MaterialTheme.typography.displayMedium,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center
-            )
-            
-            Spacer(modifier = Modifier.size(64.dp))
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
         
         // 录音区域
         VoiceRecordingSection(
@@ -468,18 +449,24 @@ fun VoiceDiaryScreen(
         Text(
             text = "最近的饮食记录",
             style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
         
         Spacer(modifier = Modifier.height(16.dp))
         
         // 历史记录列表
         LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(diaryEntries) { entry ->
                 DiaryEntryCard(entry = entry)
             }
+        }
         }
     }
 }
@@ -511,7 +498,8 @@ fun VoiceRecordingSection(
                 text = "说说今天吃了什么吧～",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
             
             // 录音按钮
@@ -538,7 +526,9 @@ fun VoiceRecordingSection(
                     else -> "点击开始录音"
                 },
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
             
             // 错误提示
@@ -546,7 +536,9 @@ fun VoiceRecordingSection(
                 Text(
                     text = errorMessage,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
             

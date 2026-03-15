@@ -1,7 +1,6 @@
 package com.eldercare.ai.ui.screens.home
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -9,10 +8,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.eldercare.ai.data.SettingsManager
+import com.eldercare.ai.rememberElderCareDatabase
+import com.eldercare.ai.ui.components.ElderCareCard
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,99 +30,109 @@ fun HomeScreen(
     onNavigateToVoiceDiary: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {}
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(32.dp)
-    ) {
-        // 顶部标题和设置按钮
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "银发智膳助手",
-                style = MaterialTheme.typography.displayMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            
+    val context = LocalContext.current
+    val settingsManager = remember { SettingsManager.getInstance(context) }
+    val db = rememberElderCareDatabase()
+    val currentUserId = settingsManager.getCurrentUserId() ?: 0L
+    val currentUser by db.userDao().getByIdFlow(currentUserId).collectAsStateWithLifecycle(initialValue = null)
+
+    val greetings = remember {
+        listOf(
+            "您好！今天想吃什么呢？\n我来帮您看看菜单吧",
+            "吃饭别着急～\n我先帮您把菜单看清楚",
+            "想吃得放心？\n拍一下菜单，我来提醒能不能吃",
+            "今天胃口怎么样？\n拍菜单我帮您挑得更合适",
+            "想清淡一点还是想解馋？\n拍菜单我来给您建议",
+            "怕盐多、糖多、油多？\n我来帮您把关",
+            "记得按时吃饭哦～\n拍菜单，我帮您看看",
+            "今天想吃热乎的还是清爽的？\n拍菜单我来参考参考",
+            "别担心看不清字\n我来帮您读菜单、讲明白",
+            "想吃得均衡一些？\n拍菜单我来搭配建议",
+            "今天要不要少油少盐？\n拍菜单我来提醒",
+            "点菜前先拍一下\n我帮您看看哪些更适合"
+        )
+    }
+
+    val greetingIndex = remember(currentUser?.lastLoginAt) {
+        val seed = currentUser?.lastLoginAt ?: System.currentTimeMillis()
+        abs((seed % greetings.size).toInt())
+    }
+    val greetingText = greetings[greetingIndex]
+
+    ElderCareScaffold(
+        title = "银发智膳助手",
+        onNavigateBack = null,
+        titleTextStyle = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+        actions = {
             IconButton(
                 onClick = onNavigateToSettings,
-                modifier = Modifier.size(64.dp)
+                modifier = Modifier.size(ElderCareDimens.IconButtonSize)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "设置",
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
+                Icon(imageVector = Icons.Default.Settings, contentDescription = "设置")
             }
         }
-        
-        // 问候语
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            ),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Text(
-                text = "您好！今天想吃什么呢？\n让我来帮您看看菜单吧～",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(24.dp),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
-        
-        // 主要功能按钮
+    ) { padding ->
         Column(
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // 拍菜单按钮 - 最重要的功能
-            ElderFunctionButton(
-                text = "拍菜单",
-                subtitle = "看看今天有什么菜",
-                icon = Icons.Default.CameraAlt,
-                onClick = onNavigateToMenuScan,
-                backgroundColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            )
-            
-            // 拍冰箱按钮
-            ElderFunctionButton(
-                text = "拍冰箱",
-                subtitle = "看看哪些菜要过期了",
-                icon = Icons.Default.Kitchen,
-                onClick = onNavigateToFridge,
-                backgroundColor = MaterialTheme.colorScheme.secondary,
-                contentColor = MaterialTheme.colorScheme.onSecondary
-            )
-            
-            // 语音日记按钮
-            ElderFunctionButton(
-                text = "今天吃了啥",
-                subtitle = "说说今天的饮食",
-                icon = Icons.Default.Mic,
-                onClick = onNavigateToVoiceDiary,
-                backgroundColor = MaterialTheme.colorScheme.tertiary,
-                contentColor = MaterialTheme.colorScheme.onTertiary
+            ElderCareCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Text(
+                    text = greetingText,
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(ElderCareDimens.CardPadding),
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                ElderFunctionButton(
+                    text = "拍菜单",
+                    subtitle = "看得懂、能不能吃、怎么吃",
+                    icon = Icons.Default.CameraAlt,
+                    onClick = onNavigateToMenuScan,
+                    backgroundColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+
+                ElderFunctionButton(
+                    text = "拍冰箱",
+                    subtitle = "临期提醒，放心不浪费",
+                    icon = Icons.Default.Kitchen,
+                    onClick = onNavigateToFridge,
+                    backgroundColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary
+                )
+
+                ElderFunctionButton(
+                    text = "今天吃了啥",
+                    subtitle = "说一说，我来帮您记",
+                    icon = Icons.Default.Mic,
+                    onClick = onNavigateToVoiceDiary,
+                    backgroundColor = MaterialTheme.colorScheme.tertiary,
+                    contentColor = MaterialTheme.colorScheme.onTertiary
+                )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Text(
+                text = "需要帮助可到设置里查看",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
         }
-        
-        Spacer(modifier = Modifier.weight(1f))
-        
-        // 底部提示
-        Text(
-            text = "有问题可以点击右上角设置",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 
@@ -132,24 +150,24 @@ fun ElderFunctionButton(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .height(120.dp),
+            .height(112.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor
         ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        shape = MaterialTheme.shapes.extraLarge,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(horizontal = 18.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(24.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = text,
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(52.dp),
                 tint = contentColor
             )
             
@@ -163,8 +181,8 @@ fun ElderFunctionButton(
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = contentColor.copy(alpha = 0.8f)
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = contentColor.copy(alpha = 0.9f)
                 )
             }
         }

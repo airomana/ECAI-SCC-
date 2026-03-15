@@ -23,6 +23,8 @@ import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
 import com.eldercare.ai.data.model.ProfileEditPayload
+import com.eldercare.ai.ui.components.ElderCareDimens
+import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import com.google.gson.Gson
 import kotlinx.coroutines.launch
@@ -69,23 +71,20 @@ fun ChildHomeScreen(
         generateAlerts(diaryEntries, healthProfile)
     }
     
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("子女守护中心") },
-                actions = {
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
-                    }
-                }
-            )
+    ElderCareScaffold(
+        title = "子女守护中心",
+        onNavigateBack = null,
+        actions = {
+            IconButton(onClick = onNavigateToSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "设置")
+            }
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
+                .padding(horizontal = ElderCareDimens.ScreenPadding, vertical = ElderCareDimens.SectionSpacing),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (!isLinked) {
