@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.eldercare.ai.llm.dashscope.*
 import com.eldercare.ai.data.entity.ConversationMessageEntity
+import com.eldercare.ai.data.entity.HealthProfile
+import com.eldercare.ai.rag.RagRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -178,6 +180,63 @@ class LlmService private constructor(private val context: Context) {
                 model = config.MODEL,
                 input = DashScopeInput(messages = messages),
                 parameters = DashScopeParameters(temperature = 0.8, max_tokens = 150, top_p = 0.9)
+     * 结合健康档案 + RAG 知识库，为某道菜生成偏保守的健康建议（结构化大白话）
+     *
+     * 说明：
+     * - 这是在 HealthRiskEvaluator 等本地规则之上的“文案增强层”
+     * - RAG 记录来自本地/CSV 的权威饮食知识，只在 prompt 中提供，不做复杂检索逻辑
+     */
+    suspend fun generateDishAdviceWithRag(
+        dishName: String,
+        healthProfile: HealthProfile?,
+        ragRecords: List<RagRecord>
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
+            val prompt = buildRagPrompt(
+                dishName = dishName,
+                healthProfile = healthProfile,
+                ragRecords = ragRecords
+            )
+
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "system",
+                            content = """
+                                你是一个非常保守的老年人健康饮食医生助理。
+                                你的首要目标是保护老人的安全，宁可多提醒“不要吃”或“少吃”，也不要随便说“没关系”。
+                                
+                                规则：
+                                1. 如果下面权威知识或疾病信息里提示“应避免”“不推荐”，你必须严格遵守，不得放宽。
+                                2. 如果你自己的知识和下面权威知识冲突，一律以权威知识和疾病限制为准。
+                                3. 如果不确定安全性，也要偏保守，建议少吃或换成更清淡的菜。
+                                4. 输出必须用简体中文、口语化、适合朗读，让老年人听得懂。
+                                5. 输出长度控制在 40～80 字之间。
+                            """.trimIndent()
+                        ),
+                        DashScopeMessage(
+                            role = "user",
+                            content = prompt
+                        )
+                    )
+                ),
+                parameters = DashScopeParameters(
+                    temperature = 0.3,   // 偏保守、稳定
+                    max_tokens = 400,
+                    top_p = 0.7
+                )
             )
 
             val response = api.generateText(
@@ -191,6 +250,24 @@ class LlmService private constructor(private val context: Context) {
             return@withContext null
         } catch (e: Exception) {
             Log.e(TAG, "generateConversationReply error", e)
+                val body = response.body()
+                val content = body?.output?.choices?.firstOrNull()?.message?.content
+                if (content != null) {
+                    val text = (content as String).trim()
+                    Log.d(TAG, "RAG建议生成成功: $text")
+                    return@withContext text
+                }
+                Log.w(TAG, "RAG建议响应体为空或格式不正确")
+                return@withContext null
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "RAG建议 API 调用失败: ${response.code()}, $errorBody")
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "生成 RAG 建议时出错", e)
+>>>>>>> 612b046 (init)
+>>>>>>> df06d86 (init project)
             return@withContext null
         }
     }
@@ -455,6 +532,68 @@ class LlmService private constructor(private val context: Context) {
     }
     
     /**
+     * 构建“健康档案 + RAG 知识库 + 当前菜”综合提示词
+     */
+    private fun buildRagPrompt(
+        dishName: String,
+        healthProfile: HealthProfile?,
+        ragRecords: List<RagRecord>
+    ): String {
+        val profile = healthProfile
+        val name = profile?.name?.takeIf { it.isNotBlank() } ?: "这位老人"
+
+        return buildString {
+            append("请根据下面信息，判断【$name】能不能吃这道菜，并给出偏保守的大白话建议。\n\n")
+
+            append("【菜品】\n")
+            append("- 名称：$dishName\n\n")
+
+            append("【老人健康档案】\n")
+            if (profile == null) {
+                append("- 未提供健康档案，请默认按高风险人群保守处理。\n\n")
+            } else {
+                append("- 年龄：${profile.age.takeIf { it > 0 } ?: 65} 岁（老年人）\n")
+                if (profile.diseases.isNotEmpty()) {
+                    append("- 慢性病：${profile.diseases.joinToString("、")}\n")
+                } else {
+                    append("- 慢性病：未填写，按可能存在常见三高等问题保守处理。\n")
+                }
+                if (profile.allergies.isNotEmpty()) {
+                    append("- 过敏：${profile.allergies.joinToString("、")}\n")
+                }
+                if (profile.dietRestrictions.isNotEmpty()) {
+                    append("- 医嘱/忌口：${profile.dietRestrictions.joinToString("、")}\n")
+                }
+                append("\n")
+            }
+
+            append("【权威饮食知识（RAG，优先遵守）】\n")
+            if (ragRecords.isEmpty()) {
+                append("- 未检索到针对本菜的权威条目，请结合老年人常见疾病，偏保守给出建议。\n\n")
+            } else {
+                ragRecords.forEachIndexed { index, record ->
+                    val idx = index + 1
+                    append("$idx. 疾病：${record.disease}；关键词：${record.keyword}；")
+                    append("风险等级：${record.riskLevel}；简要建议：${record.advice}；来源：${record.source}")
+                    if (!record.url.isNullOrBlank()) {
+                        append("；链接：${record.url}")
+                    }
+                    append("\n")
+                }
+                append("\n")
+            }
+
+            append("【输出要求】\n")
+            append("1. 只输出一小段大白话，用第二人称“您”，直接对老人说话。\n")
+            append("2. 必须体现风险等级和是否推荐（例如：不推荐/尽量少吃/可以适量吃）。\n")
+            append("3. 如果权威知识或疾病信息提示高风险，明确说“最好不要吃”，并给一个简单替代建议（如：清蒸鱼、清炒蔬菜等）。\n")
+            append("4. 不要输出列表、JSON 或分点，只要一个自然段即可。\n")
+            append("5. 如果没有把握，也要说明“为了保险起见，建议少吃或不吃”。\n")
+        }
+    }
+
+    /**
+>>>>>>> df06d86 (init project)
      * 构建语音日记回应的提示词
      */
     private fun buildDiaryResponsePrompt(
