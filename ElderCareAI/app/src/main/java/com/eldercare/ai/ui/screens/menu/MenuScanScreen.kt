@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import kotlin.math.max
@@ -61,6 +62,7 @@ import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.ui.theme.ElderCareAITheme
 import com.eldercare.ai.utils.ImageProcessor
 import com.eldercare.ai.utils.ImageQuality
+import com.eldercare.ai.rag.DietKnowledgeRepository
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -89,6 +91,7 @@ fun MenuScanScreen(
     val riskEvaluator = remember { HealthRiskEvaluator() }
     val ttsService = remember { TtsService.getInstance(context) }
     val llmService = remember { LlmService.getInstance(context) }
+    val dietKnowledgeRepository = remember { DietKnowledgeRepository.getInstance(context) }
     
     // 读取健康档案和TTS设置
     var healthProfile by remember { mutableStateOf<com.eldercare.ai.data.entity.HealthProfile?>(null) }
@@ -190,7 +193,7 @@ fun MenuScanScreen(
                     appendLine("处理菜名数: ${limitedCandidates.size}")
                 }
                 
-                // 查询菜品知识库并生成智能建议
+                // 查询菜品知识库并生成智能建议（结合本地规则 + RAG + LLM）
                 val results = mutableListOf<DishResult>()
                 var llmCallCount = 0  // 限制LLM调用次数
                 val maxLlmCalls = 10  // 最多调用10次LLM（覆盖所有处理的菜品）
@@ -254,6 +257,42 @@ fun MenuScanScreen(
                         
                         // 调试日志：确保风险等级和建议匹配
                         android.util.Log.d("MenuScan", "菜品: ${candidate.name}, 风险等级: ${riskResult.riskLevel}, 建议: $personalizedAdvice")
+
+                        // 结合 RAG + LLM，对建议做“偏保守”的文案增强
+                        // 逻辑：优先“健康档案(高权重) + CSV 命中条目”；若 CSV 未命中，再调用“仅健康档案”的 LLM 建议
+                        val ragAdvice: String? = try {
+                            if (llmCallCount < maxLlmCalls &&
+                                com.eldercare.ai.llm.LlmConfig.isConfigured() &&
+                                com.eldercare.ai.llm.LlmConfig.isEnabled(context)
+                            ) {
+                                val ragRecords = withContext(Dispatchers.IO) {
+                                    dietKnowledgeRepository.query(healthProfile, candidate.name)
+                                }
+                                llmCallCount++
+                                if (ragRecords.isNotEmpty()) {
+                                    llmService.generateDishAdviceWithRag(
+                                        dishName = candidate.name,
+                                        healthProfile = healthProfile,
+                                        ragRecords = ragRecords
+                                    )
+                                } else {
+                                    llmService.generateDishAdviceFromProfileOnly(
+                                        dishName = candidate.name,
+                                        healthProfile = healthProfile
+                                    )
+                                }
+                            } else {
+                                null
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MenuScan", "RAG+LLM 生成建议失败: ${candidate.name}", e)
+                            null
+                        }
+
+                        val finalAdvice = ragAdvice ?: basePersonalizedAdvice
+                        
+                        // 调试日志：确保风险等级和建议匹配
+                        android.util.Log.d("MenuScan", "菜品: ${candidate.name}, 风险等级: ${riskResult.riskLevel}, 建议: $finalAdvice")
                         
                         results.add(DishResult(
                             name = candidate.name,
@@ -1474,12 +1513,23 @@ fun CropImageDialog(
                             )
                         }
                         
-                        // 绘制裁剪框边框
+
+                        // 绘制裁剪框边框（虚线框）
                         drawRect(
                             color = Color.White,
                             topLeft = Offset(cropX, cropY),
                             size = Size(cropWidth, cropHeight),
-                            style = Stroke(width = with(density) { 3.dp.toPx() })
+
+                            style = Stroke(
+                                width = with(density) { 3.dp.toPx() },
+                                pathEffect = PathEffect.dashPathEffect(
+                                    floatArrayOf(
+                                        with(density) { 8.dp.toPx() },
+                                        with(density) { 4.dp.toPx() }
+                                    ),
+                                    0f
+                                )
+                            )
                         )
                         
                         // 绘制四个角的控制点
@@ -1520,7 +1570,7 @@ fun CropImageDialog(
                 
                 // 提示文字
                 Text(
-                    text = "拖拽边框调整区域，拖拽中心移动位置",
+                    text = "请将菜单大致放在虚线框内，拖拽边框可调整识别区域",
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
