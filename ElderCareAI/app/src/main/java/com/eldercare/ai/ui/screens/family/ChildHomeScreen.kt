@@ -61,6 +61,12 @@ fun ChildHomeScreen(
     var showSuggestDialog by remember { mutableStateOf(false) }
     var showSubmittedDialog by remember { mutableStateOf(false) }
     
+    // 周报相关状态
+    var showWeeklyReportDialog by remember { mutableStateOf(false) }
+    var isGeneratingReport by remember { mutableStateOf(false) }
+    var generatedReport by remember { mutableStateOf<String?>(null) }
+    val llmService = remember { com.eldercare.ai.llm.LlmService.getInstance(context) }
+    
     // 计算统计数据
     val now = System.currentTimeMillis()
     val weekAgo = now - 7 * 24 * 60 * 60 * 1000L
@@ -155,11 +161,33 @@ fun ChildHomeScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "本周统计",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "本周陪伴统计",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Button(
+                            onClick = {
+                                showWeeklyReportDialog = true
+                                if (generatedReport == null) {
+                                    isGeneratingReport = true
+                                    scope.launch {
+                                        val report = llmService.generateWeeklyReport(weeklyEntries, healthProfile)
+                                        generatedReport = report ?: "周报生成失败或模型未配置，请稍后再试或配置模型。"
+                                        isGeneratingReport = false
+                                    }
+                                }
+                            },
+                            enabled = weeklyEntries.isNotEmpty()
+                        ) {
+                            Text("生成智能周报")
+                        }
+                    }
                     Text("记录天数：${weeklyEntries.distinctBy { 
                         SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it.date))
                     }.size}/7")
@@ -219,7 +247,7 @@ fun ChildHomeScreen(
             
             // 最近3条记录
             Text(
-                text = "最近记录",
+                text = "最近陪伴记录",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -280,6 +308,32 @@ fun ChildHomeScreen(
             confirmButton = {
                 TextButton(onClick = { showSubmittedDialog = false }) {
                     Text("知道了")
+                }
+            }
+        )
+    }
+
+    if (showWeeklyReportDialog) {
+        AlertDialog(
+            onDismissRequest = { showWeeklyReportDialog = false },
+            title = { Text("智能情绪陪伴周报") },
+            text = {
+                if (isGeneratingReport) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator()
+                        Text("正在生成智能周报...")
+                    }
+                } else {
+                    Text(text = generatedReport ?: "暂无内容")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showWeeklyReportDialog = false }) {
+                    Text("关闭")
                 }
             }
         )
@@ -547,19 +601,34 @@ private fun generateAlerts(
     val threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000L
     val recentEntries = diaryEntries.filter { it.date >= threeDaysAgo }
     
-    // 检查连续3天高油高盐
+    // 检查连续3天高油高盐饮食提及
     val highFatKeywords = listOf("红烧", "油炸", "油", "肉", "肥")
     val highFatCount = recentEntries.count { entry ->
         highFatKeywords.any { entry.content.contains(it) }
     }
     if (highFatCount >= 3) {
-        alerts.add("连续3天高油高盐食物较多，建议提醒父母注意饮食")
+        alerts.add("连续3天提及高油高盐食物，建议提醒父母注意饮食")
     }
     
     // 检查孤独信号
     val lonelyCount = recentEntries.count { it.emotion == "孤单" }
     if (lonelyCount >= 3) {
-        alerts.add("父母连续3天表达孤独情绪，建议多陪伴")
+        alerts.add("父母连续3天表达孤独情绪，建议多陪伴和联系")
+    }
+    
+    // 检查负面情绪信号
+    val worryCount = recentEntries.count { it.emotion == "担心" }
+    if (worryCount >= 3) {
+        alerts.add("父母最近可能有些焦虑或担心，建议打电话关心一下")
+    }
+    
+    // 检查身体不适关键词
+    val sickKeywords = listOf("疼", "痛", "不舒服", "难受", "生病", "头晕", "乏力")
+    val sickCount = recentEntries.count { entry ->
+        sickKeywords.any { entry.content.contains(it) }
+    }
+    if (sickCount > 0) {
+        alerts.add("父母最近提及了身体不适，请及时关注健康状况")
     }
     
     // 检查禁忌食物
@@ -567,11 +636,11 @@ private fun generateAlerts(
         recentEntries.forEach { entry ->
             healthProfile.allergies.forEach { allergy ->
                 if (entry.content.contains(allergy)) {
-                    alerts.add("父母可能摄入了禁忌食物：$allergy")
+                    alerts.add("父母聊天中提及了可能的禁忌食物：$allergy")
                 }
             }
         }
     }
     
-    return alerts
+    return alerts.distinct()
 }
