@@ -101,7 +101,9 @@ std::string WhisperProcessor::transcribe(const float* audio_data, int length) {
             params.temperature = 0.0f;
             params.max_len = 0;  // 使用默认值，不限制长度
             params.token_timestamps = false;
-            params.audio_ctx = 0;  // 使用默认值，不要减小
+            // audio_ctx：限制为实际音频帧数，避免处理多余的空白帧（最大1500）
+            int audio_frames = processed_length / 160;  // 每帧160个采样点
+            params.audio_ctx = std::min(audio_frames + 64, 1500);  // 加64帧余量
             params.prompt_tokens = nullptr;
             params.prompt_n_tokens = 0;
             params.no_timestamps = true;  // 不需要时间戳

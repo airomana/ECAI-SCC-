@@ -3,6 +3,7 @@ package com.eldercare.ai.llm
 import android.content.Context
 import android.util.Log
 import com.eldercare.ai.llm.dashscope.*
+import com.eldercare.ai.data.entity.ConversationMessageEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -143,6 +144,58 @@ class LlmService private constructor(private val context: Context) {
     }
     
     /**
+     * 生成多轮对话回复（带历史上下文）
+     */
+    suspend fun generateConversationReply(
+        userMessage: String,
+        emotion: String,
+        history: List<com.eldercare.ai.data.entity.ConversationMessageEntity>,
+        userName: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured() || !config.isEnabled(context)) return@withContext null
+
+            val name = userName?.takeIf { it.isNotBlank() } ?: "您"
+            val systemPrompt = "你是一个温暖贴心的老年人陪伴助手，名叫小助手。" +
+                "你的回应要：语言亲切自然像家人，用简单大白话，根据情绪给予关怀，" +
+                "控制在40字以内，适合语音播报，语气温和让老人感受到陪伴。" +
+                "称呼老人为\"${name}\"。"
+
+            // 构建多轮消息历史
+            val messages = mutableListOf<DashScopeMessage>()
+            messages.add(DashScopeMessage(role = "system", content = systemPrompt))
+
+            // 加入历史消息（最多6条）
+            history.takeLast(6).forEach { msg ->
+                messages.add(DashScopeMessage(role = msg.role, content = msg.content))
+            }
+
+            // 加入当前用户消息（附带情绪提示）
+            val userPrompt = if (emotion != "平静") "$userMessage（当前情绪：$emotion）" else userMessage
+            messages.add(DashScopeMessage(role = "user", content = userPrompt))
+
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(messages = messages),
+                parameters = DashScopeParameters(temperature = 0.8, max_tokens = 150, top_p = 0.9)
+            )
+
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                return@withContext response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+            }
+            return@withContext null
+        } catch (e: Exception) {
+            Log.e(TAG, "generateConversationReply error", e)
+            return@withContext null
+        }
+    }
+
+    /**
      * 为语音日记生成温暖的AI回应
      * 
      * @param diaryContent 日记内容（用户说的话）
@@ -178,11 +231,11 @@ class LlmService private constructor(private val context: Context) {
                     messages = listOf(
                         DashScopeMessage(
                             role = "system",
-                            content = "你是一个温暖贴心的饮食陪伴助手，专门为老年人服务。你的回应要：\n" +
+                            content = "你是一个温暖贴心的陪伴助手，专门为老年人服务。你的回应要：\n" +
                                     "1. 语言亲切自然，像家人一样温暖\n" +
                                     "2. 用简单易懂的大白话，避免专业术语\n" +
                                     "3. 根据老人的情绪给予适当的关怀和鼓励\n" +
-                                    "4. 可以适当给出简单的饮食建议\n" +
+                                    "4. 像聊天一样回应老人的话\n" +
                                     "5. 控制在30-50字以内，适合语音播报\n" +
                                     "6. 语气要温和、关心，让老人感受到陪伴"
                         ),
@@ -224,6 +277,59 @@ class LlmService private constructor(private val context: Context) {
             
         } catch (e: Exception) {
             Log.e(TAG, "生成AI回应时出错", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * 生成子女端的周报
+     */
+    suspend fun generateWeeklyReport(
+        entries: List<com.eldercare.ai.data.entity.DiaryEntryEntity>,
+        healthProfile: com.eldercare.ai.data.entity.HealthProfile? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured() || !config.isEnabled(context)) return@withContext null
+            
+            val entriesText = entries.joinToString("\n") { "情绪: ${it.emotion}, 内容: ${it.content}" }
+            val prompt = buildString {
+                append("这是老人过去一周的陪伴聊天记录：\n$entriesText\n\n")
+                if (healthProfile != null) {
+                    append("老人的健康档案：姓名${healthProfile.name}，疾病${healthProfile.diseases.joinToString("、")}。\n\n")
+                }
+                append("请你作为陪伴助手，为老人的子女生成一份周报。要求：\n")
+                append("1. 总结老人这一周的主要情绪状态\n")
+                append("2. 提取老人提到的重要生活事件或需求\n")
+                append("3. 给出1-2条具体的关怀建议\n")
+                append("4. 语气专业、贴心，控制在150字以内")
+            }
+            
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "user",
+                            content = prompt
+                        )
+                    )
+                ),
+                parameters = DashScopeParameters(
+                    temperature = 0.5,
+                    max_tokens = 300
+                )
+            )
+            
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+            if (response.isSuccessful) {
+                return@withContext response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+            }
+            return@withContext null
+        } catch (e: Exception) {
+            Log.e(TAG, "生成周报出错", e)
             return@withContext null
         }
     }
@@ -367,22 +473,21 @@ class LlmService private constructor(private val context: Context) {
             append("\n2. 对老人的分享表示理解和关心")
             append("\n3. 根据情绪给予适当的回应：")
             when (emotion) {
-                "满意" -> {
-                    append("\n   - 如果是满意：表达高兴，鼓励继续保持")
+                "满意", "开心" -> {
+                    append("\n   - 如果是开心：表达高兴，陪老人一起开心")
                 }
                 "担心" -> {
-                    append("\n   - 如果是担心：给予安慰，提供简单的建议")
+                    append("\n   - 如果是担心：给予安慰，缓解焦虑")
                 }
                 "孤单" -> {
-                    append("\n   - 如果是孤单：表达理解和陪伴，建议多联系家人")
+                    append("\n   - 如果是孤单：表达理解和陪伴，建议多联系家人或找点乐子")
                 }
                 else -> {
-                    append("\n   - 如果是平静：简单回应，表示记住了")
+                    append("\n   - 如果是平静：像闲聊一样自然回应，可以顺着话题往下聊")
                 }
             }
-            append("\n4. 可以简单提及饮食建议（如果有明显问题）")
-            append("\n5. 语言要自然、口语化，适合语音播报")
-            append("\n6. 控制在30-50字以内")
+            append("\n4. 语言要自然、口语化，适合语音播报")
+            append("\n5. 控制在30-50字以内")
             append("\n\n请直接给出回应，不要加引号或其他格式。")
         }
     }

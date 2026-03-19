@@ -19,6 +19,9 @@ import com.eldercare.ai.data.dao.PersonalSituationDao
 import com.eldercare.ai.data.dao.EmergencyContactDao
 import com.eldercare.ai.data.dao.ProfileEditRequestDao
 import com.eldercare.ai.data.dao.FamilyLinkRequestDao
+import com.eldercare.ai.data.dao.ConversationSessionDao
+import com.eldercare.ai.data.dao.ConversationMessageDao
+import com.eldercare.ai.data.dao.EmotionLogDao
 import com.eldercare.ai.data.entity.Dish
 import com.eldercare.ai.data.entity.FridgeItemEntity
 import com.eldercare.ai.data.entity.FridgeScanEntity
@@ -31,13 +34,16 @@ import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.EmergencyContactEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
 import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
+import com.eldercare.ai.data.entity.ConversationSessionEntity
+import com.eldercare.ai.data.entity.ConversationMessageEntity
+import com.eldercare.ai.data.entity.EmotionLogEntity
 import com.eldercare.ai.data.converters.Converters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 const val ELDER_CARE_DB_NAME = "elder_care_db"
-const val ELDER_CARE_DB_VERSION = 6
+const val ELDER_CARE_DB_VERSION = 7
 
 @Database(
     entities = [
@@ -52,7 +58,10 @@ const val ELDER_CARE_DB_VERSION = 6
         PersonalSituationEntity::class,
         EmergencyContactEntity::class,
         ProfileEditRequestEntity::class,
-        FamilyLinkRequestEntity::class
+        FamilyLinkRequestEntity::class,
+        ConversationSessionEntity::class,
+        ConversationMessageEntity::class,
+        EmotionLogEntity::class
     ],
     version = ELDER_CARE_DB_VERSION,
     exportSchema = false
@@ -72,6 +81,9 @@ abstract class ElderCareDatabase : RoomDatabase() {
     abstract fun emergencyContactDao(): EmergencyContactDao
     abstract fun profileEditRequestDao(): ProfileEditRequestDao
     abstract fun familyLinkRequestDao(): FamilyLinkRequestDao
+    abstract fun conversationSessionDao(): ConversationSessionDao
+    abstract fun conversationMessageDao(): ConversationMessageDao
+    abstract fun emotionLogDao(): EmotionLogDao
 
     companion object {
         @Volatile
@@ -322,6 +334,53 @@ abstract class ElderCareDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                android.util.Log.d("ElderCareDatabase", "Starting migration from version 6 to 7")
+                // 创建对话会话表
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS conversation_session (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        startTime INTEGER NOT NULL,
+                        endTime INTEGER,
+                        overallEmotion TEXT NOT NULL DEFAULT '平静',
+                        emotionIntensity INTEGER NOT NULL DEFAULT 50,
+                        summary TEXT NOT NULL DEFAULT '',
+                        messageCount INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                // 创建对话消息表
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS conversation_message (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sessionId INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        emotion TEXT NOT NULL DEFAULT '',
+                        emotionIntensity INTEGER NOT NULL DEFAULT 50,
+                        FOREIGN KEY(sessionId) REFERENCES conversation_session(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_conversation_message_sessionId ON conversation_message(sessionId)")
+                // 创建情绪日志表
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS emotion_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        dayTimestamp INTEGER NOT NULL,
+                        dominantEmotion TEXT NOT NULL,
+                        emotionDistributionJson TEXT NOT NULL DEFAULT '{}',
+                        conversationCount INTEGER NOT NULL DEFAULT 0,
+                        totalMessages INTEGER NOT NULL DEFAULT 0,
+                        summary TEXT NOT NULL DEFAULT '',
+                        sentToFamily INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                android.util.Log.d("ElderCareDatabase", "Migration 6->7 completed")
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope
@@ -334,7 +393,7 @@ abstract class ElderCareDatabase : RoomDatabase() {
                         ElderCareDatabase::class.java,
                         ELDER_CARE_DB_NAME
                     )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .addCallback(ElderCareDatabaseCallback(scope))
                     .fallbackToDestructiveMigrationOnDowngrade() // 降级时重建数据库
                     .allowMainThreadQueries() // 临时允许主线程查询，避免启动阻塞

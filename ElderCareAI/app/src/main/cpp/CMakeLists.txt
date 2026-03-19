@@ -131,7 +131,13 @@ target_compile_definitions(eldercare-ai PRIVATE
     __ANDROID_API__=${ANDROID_PLATFORM_LEVEL}
 )
 
-# 优化选项
+# 优化选项 - 对所有构建类型都开启 NEON 和 O2
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -march=armv8-a+fp+simd")
+elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -mfpu=neon -mfloat-abi=softfp")
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_definitions(eldercare-ai PRIVATE NDEBUG)
     set_target_properties(eldercare-ai PROPERTIES
