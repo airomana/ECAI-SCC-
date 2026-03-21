@@ -227,22 +227,50 @@ class ConversationManager private constructor(
         sb.appendLine("统计周期：$weekStart - $weekEnd")
         sb.appendLine()
 
+        // 优先使用 EmotionLogEntity 的汇总数据
         val activeDays = logs.size
+        val totalConversations = logs.sumOf { it.conversationCount }
+        val totalMessages = logs.sumOf { it.totalMessages }
         sb.appendLine("✅ 陪伴天数：本周 $activeDays 天有对话记录")
+        if (totalConversations > 0) sb.appendLine("💬 对话次数：共 $totalConversations 次对话，$totalMessages 条消息")
 
-        val allEmotions = entries.map { it.emotion }.filter { it.isNotBlank() }
-        val dominant = EmotionAnalyzer.dominantEmotion(allEmotions)
+        // 情绪分布统计（从 EmotionLogEntity 汇总）
+        val emotionCounts = mutableMapOf<String, Int>()
+        logs.forEach { log ->
+            // 统计每天的主要情绪
+            emotionCounts[log.dominantEmotion] = (emotionCounts[log.dominantEmotion] ?: 0) + 1
+        }
+        val dominant = emotionCounts.maxByOrNull { it.value }?.key
+            ?: EmotionAnalyzer.dominantEmotion(entries.map { it.emotion }.filter { it.isNotBlank() })
         sb.appendLine("😊 主要情绪：$dominant")
 
-        val lonelyCount = allEmotions.count { it == "孤单" }
-        val sadCount = allEmotions.count { it == "难过" }
+        // 情绪趋势（按天列出）
+        if (logs.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("📅 每日情绪：")
+            logs.sortedBy { it.dayTimestamp }.forEach { log ->
+                val dayStr = sdf.format(Date(log.dayTimestamp))
+                sb.appendLine("  $dayStr：${log.dominantEmotion}（对话${log.conversationCount}次）")
+            }
+        }
+
+        // 关注点分析
+        sb.appendLine()
+        val lonelyDays = logs.count { it.dominantEmotion == "孤单" }
+        val sadDays = logs.count { it.dominantEmotion == "难过" }
+        val worryDays = logs.count { it.dominantEmotion == "担心" }
         val sickCount = entries.count { e ->
             listOf("疼", "痛", "不舒服", "生病", "头晕").any { e.content.contains(it) }
         }
+        val happyDays = logs.count { it.dominantEmotion in listOf("开心", "满意") }
 
-        if (lonelyCount >= 2) sb.appendLine("💬 关注：本周有 $lonelyCount 次表达孤单，建议多联系陪伴")
-        if (sadCount >= 2) sb.appendLine("⚠️ 关注：本周有 $sadCount 次情绪低落，请多关心")
+        if (happyDays >= 3) sb.appendLine("🌟 本周有 $happyDays 天情绪积极，状态良好！")
+        if (lonelyDays >= 2) sb.appendLine("💔 关注：有 $lonelyDays 天主要情绪为孤单，建议多联系陪伴")
+        if (sadDays >= 2) sb.appendLine("⚠️ 关注：有 $sadDays 天情绪低落，请多关心")
+        if (worryDays >= 2) sb.appendLine("😟 关注：有 $worryDays 天表达担忧，建议打电话聊聊")
         if (sickCount > 0) sb.appendLine("🏥 健康：本周提及身体不适 $sickCount 次，请关注健康状况")
+        if (activeDays == 0) sb.appendLine("📵 本周无对话记录，请关注老人状态")
+        else if (activeDays < 3) sb.appendLine("📉 本周陪伴天数较少（$activeDays 天），建议增加互动频率")
 
         sb.appendLine()
         sb.appendLine("共记录 ${entries.size} 条对话，请继续保持关爱。")

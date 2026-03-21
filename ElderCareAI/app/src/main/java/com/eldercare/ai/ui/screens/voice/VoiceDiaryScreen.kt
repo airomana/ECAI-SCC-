@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eldercare.ai.companion.ConversationManager
 import com.eldercare.ai.companion.EmotionAnalyzer
+import com.eldercare.ai.data.entity.EmotionLogEntity
 import com.eldercare.ai.data.entity.ConversationMessageEntity
 import com.eldercare.ai.rememberElderCareDatabase
 import com.eldercare.ai.tts.TtsService
@@ -75,6 +76,9 @@ fun VoiceDiaryScreen(onNavigateBack: () -> Unit = {}) {
     var rmsLevel by remember { mutableStateOf(0f) }
     // Whisper 初始化状态
     var whisperReady by remember { mutableStateOf(false) }
+    // 情绪日志
+    var showMyLogs by remember { mutableStateOf(false) }
+    val emotionLogs by db.emotionLogDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
 
     val listState = rememberLazyListState()
 
@@ -221,6 +225,9 @@ fun VoiceDiaryScreen(onNavigateBack: () -> Unit = {}) {
         title = "语音陪伴",
         onNavigateBack = { endCurrentSession(); onNavigateBack() },
         actions = {
+            IconButton(onClick = { showMyLogs = true }) {
+                Icon(Icons.Default.EventNote, contentDescription = "我的日志")
+            }
             if (currentSessionId != null) {
                 TextButton(onClick = { endCurrentSession() }) {
                     Text("结束对话", style = MaterialTheme.typography.bodyMedium)
@@ -270,9 +277,75 @@ fun VoiceDiaryScreen(onNavigateBack: () -> Unit = {}) {
             )
         }
     }
+    // ── 情绪日志弹窗 ────────────────────────────────────────────────
+    if (showMyLogs) {
+        MyEmotionLogsDialog(
+            emotionLogs = emotionLogs,
+            onDismiss = { showMyLogs = false }
+        )
+    }
 }
 
-// ── 欢迎卡片 ────────────────────────────────────────────────────────
+// ── 我的情绪日志弹窗（老人端）──────────────────────────────────────
+@Composable
+private fun MyEmotionLogsDialog(
+    emotionLogs: List<EmotionLogEntity>,
+    onDismiss: () -> Unit
+) {
+    val sdf = remember { SimpleDateFormat("MM月dd日", Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("我的情绪日志", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            if (emotionLogs.isEmpty()) {
+                Text("暂无记录，多和我聊聊天吧～", style = MaterialTheme.typography.bodyLarge)
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.heightIn(max = 400.dp)
+                ) {
+                    items(emotionLogs.take(14)) { log ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                sdf.format(Date(log.dayTimestamp)),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                                color = when (log.dominantEmotion) {
+                                    "开心", "满意" -> MaterialTheme.colorScheme.primaryContainer
+                                    "孤单", "难过" -> MaterialTheme.colorScheme.secondaryContainer
+                                    "担心", "不适" -> MaterialTheme.colorScheme.errorContainer
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                }
+                            ) {
+                                Text(
+                                    log.dominantEmotion,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Text(
+                                "聊了${log.conversationCount}次",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    )
+}
 @Composable
 private fun WelcomeCard(whisperReady: Boolean) {
     Card(
