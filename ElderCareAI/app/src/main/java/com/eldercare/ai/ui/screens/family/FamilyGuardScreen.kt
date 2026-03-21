@@ -1,5 +1,6 @@
 package com.eldercare.ai.ui.screens.family
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
@@ -557,11 +559,15 @@ fun WeeklyReportDialog(
     val scope = rememberCoroutineScope()
     val conversationManager = remember { ConversationManager.getInstance(context, db) }
     val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
+    val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     var isGenerating by remember { mutableStateOf(true) }
     var reportContent by remember { mutableStateOf<String?>(null) }
+    var reportLogs by remember { mutableStateOf<List<EmotionLogEntity>>(emptyList()) }
     var showSendOptions by remember { mutableStateOf(false) }
 
     LaunchedEffect(diaryEntries) {
+        val weekAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+        reportLogs = db.emotionLogDao().getByTimeRange(weekAgo, System.currentTimeMillis())
         val report = conversationManager.generateWeeklyReport(healthProfile?.name)
         reportContent = report
         isGenerating = false
@@ -605,8 +611,17 @@ fun WeeklyReportDialog(
     if (showSendOptions && !reportContent.isNullOrBlank()) {
         SendReportDialog(
             reportContent = reportContent!!,
-            contacts = emptyList(),
-            onDismiss = { showSendOptions = false }
+            contacts = contacts,
+            onDismiss = { showSendOptions = false },
+            onSent = {
+                // 标记本周所有日志为已发送
+                scope.launch {
+                    reportLogs.filter { !it.sentToFamily }.forEach { log ->
+                        db.emotionLogDao().markAsSent(log.id)
+                    }
+                }
+                showSendOptions = false
+            }
         )
     }
 }
@@ -652,10 +667,18 @@ fun AlertsDialog(
 fun SendReportDialog(
     reportContent: String,
     contacts: List<EmergencyContactEntity>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onSent: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var phoneNumber by remember { mutableStateOf("") }
+
+    // 预填第一个联系人号码
+    LaunchedEffect(contacts) {
+        if (phoneNumber.isBlank() && contacts.isNotEmpty()) {
+            phoneNumber = contacts.first().phone
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -664,7 +687,24 @@ fun SendReportDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("选择发送方式：", style = MaterialTheme.typography.bodyMedium)
 
-                // 短信发送
+                // 快速选择联系人
+                if (contacts.isNotEmpty()) {
+                    Text("快速选择：", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    contacts.take(5).forEach { contact ->
+                        OutlinedButton(
+                            onClick = { phoneNumber = contact.phone },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = if (phoneNumber == contact.phone)
+                                ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                            else ButtonDefaults.outlinedButtonColors()
+                        ) {
+                            Text("${contact.name.ifBlank { "联系人" }}  ${contact.phone}")
+                        }
+                    }
+                }
+
+                // 手动输入号码
                 OutlinedTextField(
                     value = phoneNumber,
                     onValueChange = { phoneNumber = it.filter { c -> c.isDigit() }.take(11) },
@@ -689,7 +729,7 @@ fun SendReportDialog(
                                 android.util.Log.e("SendReport", "SMS failed", e)
                             }
                         }
-                        onDismiss()
+                        onSent()
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = phoneNumber.length >= 7
@@ -708,7 +748,7 @@ fun SendReportDialog(
                             putExtra(Intent.EXTRA_SUBJECT, "父母情绪陪伴周报")
                         }
                         context.startActivity(Intent.createChooser(intent, "分享周报"))
-                        onDismiss()
+                        onSent()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -726,12 +766,13 @@ fun SendReportDialog(
 }
 
 /**
- * 情绪日志卡片（展示近7天情绪趋势）
+ * 情绪日志卡片（展示近7天情绪趋势，含简单条形图）
  */
 @Composable
 fun EmotionLogCard(emotionLogs: List<EmotionLogEntity>) {
     if (emotionLogs.isEmpty()) return
     val sdf = remember { SimpleDateFormat("MM/dd", Locale.getDefault()) }
+    val recent7 = remember(emotionLogs) { emotionLogs.sortedBy { it.dayTimestamp }.takeLast(7) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -739,10 +780,65 @@ fun EmotionLogCard(emotionLogs: List<EmotionLogEntity>) {
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("近期情绪日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            emotionLogs.take(7).forEach { log ->
+
+            // 情绪趋势条形图
+            if (recent7.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    recent7.forEach { log ->
+                        val barColor = when (log.dominantEmotion) {
+                            "开心", "满意" -> MaterialTheme.colorScheme.primary
+                            "孤单", "难过" -> MaterialTheme.colorScheme.secondary
+                            "担心", "不适" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.4f)
+                        }
+                        val heightFraction = when (log.dominantEmotion) {
+                            "开心", "满意" -> 1.0f
+                            "平静" -> 0.6f
+                            "孤单", "担心" -> 0.5f
+                            "难过", "不适" -> 0.4f
+                            else -> 0.5f
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Bottom
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(heightFraction)
+                                    .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                    .background(barColor)
+                            )
+                        }
+                    }
+                }
+                // 日期标签
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    recent7.forEach { log ->
+                        Text(
+                            sdf.format(Date(log.dayTimestamp)),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+
+            // 文字列表
+            recent7.reversed().forEach { log ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -773,6 +869,15 @@ fun EmotionLogCard(emotionLogs: List<EmotionLogEntity>) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
+                    // 已发送标记
+                    if (log.sentToFamily) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "已发送",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
