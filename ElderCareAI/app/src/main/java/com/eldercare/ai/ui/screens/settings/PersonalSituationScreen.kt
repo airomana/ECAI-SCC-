@@ -58,13 +58,14 @@ import com.eldercare.ai.data.entity.EmergencyContactEntity
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
-import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
 import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.model.ProfileEditPayload
 import com.eldercare.ai.ui.components.ElderCareDimens
 import com.eldercare.ai.ui.components.ElderCareScaffold
 import com.eldercare.ai.rememberElderCareDatabase
 import com.google.gson.Gson
+import com.eldercare.ai.data.network.ApiClient
+import com.eldercare.ai.data.network.FamilyLinkRequest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -89,7 +90,17 @@ fun PersonalSituationScreen(
     val personalSituation by db.personalSituationDao().get().collectAsStateWithLifecycle(initialValue = null)
     val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val pendingRequests by db.profileEditRequestDao().getByStatus("pending").collectAsStateWithLifecycle(initialValue = emptyList())
-    val pendingLinkRequests by db.familyLinkRequestDao().getByParentAndStatus(currentUserId, "pending").collectAsStateWithLifecycle(initialValue = emptyList())
+    // 替换本地查询为云端请求数据
+    var pendingLinkRequests by remember { mutableStateOf<List<FamilyLinkRequest>>(emptyList()) }
+    LaunchedEffect(currentUserId, role) {
+        if (role == "parent" && currentUserId != null) {
+            try {
+                pendingLinkRequests = ApiClient.apiService.getLinkRequests(currentUserId)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     var showBasicDialog by remember { mutableStateOf(false) }
     var showHealthDialog by remember { mutableStateOf(false) }
@@ -99,7 +110,7 @@ fun PersonalSituationScreen(
     var showContactDialog by remember { mutableStateOf(false) }
     var showDeleteContactConfirm by remember { mutableStateOf<EmergencyContactEntity?>(null) }
     var requestHandling by remember { mutableStateOf<ProfileEditRequestEntity?>(null) }
-    var linkRequestHandling by remember { mutableStateOf<FamilyLinkRequestEntity?>(null) }
+    var linkRequestHandling by remember { mutableStateOf<FamilyLinkRequest?>(null) }
 
     LaunchedEffect(onboarding) {
         if (onboarding) {
@@ -305,6 +316,7 @@ fun PersonalSituationScreen(
                                     upsertPersonalSituation(db, personalSituation) { entity ->
                                         entity.copy(shareHealth = checkedValue, updatedAt = System.currentTimeMillis())
                                     }
+                                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                                 }
                             }
                         )
@@ -316,6 +328,7 @@ fun PersonalSituationScreen(
                                     upsertPersonalSituation(db, personalSituation) { entity ->
                                         entity.copy(shareDiet = checkedValue, updatedAt = System.currentTimeMillis())
                                     }
+                                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                                 }
                             }
                         )
@@ -327,6 +340,7 @@ fun PersonalSituationScreen(
                                     upsertPersonalSituation(db, personalSituation) { entity ->
                                         entity.copy(shareContacts = checkedValue, updatedAt = System.currentTimeMillis())
                                     }
+                                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                                 }
                             }
                         )
@@ -510,6 +524,7 @@ fun PersonalSituationScreen(
                     )
                     if (existing == null) db.healthProfileDao().insert(merged) else db.healthProfileDao().update(merged)
                     upsertPersonalSituation(db, personalSituation) { it.copy(city = city.trim(), updatedAt = System.currentTimeMillis()) }
+                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                 }
                 showBasicDialog = false
             }
@@ -531,6 +546,7 @@ fun PersonalSituationScreen(
                         updatedAt = System.currentTimeMillis()
                     )
                     if (existing == null) db.healthProfileDao().insert(merged) else db.healthProfileDao().update(merged)
+                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                 }
                 showHealthDialog = false
             }
@@ -572,6 +588,7 @@ fun PersonalSituationScreen(
                             updatedAt = System.currentTimeMillis()
                         )
                     }
+                    com.eldercare.ai.data.network.SyncManager(context).syncHealthAndPermissions()
                 }
                 showLivingDialog = false
             }
@@ -683,7 +700,7 @@ fun PersonalSituationScreen(
             title = { Text("关联申请") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("子女账号：${childPhone.ifBlank { "未知" }}")
+                    Text("子女账号：${linkReq.childPhone ?: linkReq.childUserId.toString()}")
                     Text(
                         text = "同意后，子女端即可查看您授权共享的信息",
                         style = MaterialTheme.typography.bodySmall,
@@ -695,27 +712,13 @@ fun PersonalSituationScreen(
                 TextButton(
                     onClick = {
                         scope.launch {
-                            val parentUser = db.userDao().getById(currentUserId)
-                            val familyId = parentUser?.familyId
-                            if (familyId.isNullOrBlank()) {
-                                linkRequestHandling = null
-                                return@launch
+                            try {
+                                ApiClient.apiService.handleLinkRequest(linkReq.id, true)
+                                // Remove from local UI list
+                                pendingLinkRequests = pendingLinkRequests.filter { it.id != linkReq.id }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
                             }
-                            val childUser = db.userDao().getById(linkReq.childUserId)
-                            if (childUser != null && childUser.familyId == null) {
-                                db.userDao().update(childUser.copy(familyId = familyId))
-                            }
-                            db.familyRelationDao().insert(
-                                FamilyRelation(
-                                    familyId = familyId,
-                                    parentUserId = currentUserId,
-                                    childUserId = linkReq.childUserId,
-                                    linkedAt = System.currentTimeMillis()
-                                )
-                            )
-                            db.familyLinkRequestDao().update(
-                                linkReq.copy(status = "accepted", handledAt = System.currentTimeMillis())
-                            )
                         }
                         linkRequestHandling = null
                     }
@@ -725,9 +728,12 @@ fun PersonalSituationScreen(
                 TextButton(
                     onClick = {
                         scope.launch {
-                            db.familyLinkRequestDao().update(
-                                linkReq.copy(status = "rejected", handledAt = System.currentTimeMillis())
-                            )
+                            try {
+                                ApiClient.apiService.handleLinkRequest(linkReq.id, false)
+                                pendingLinkRequests = pendingLinkRequests.filter { it.id != linkReq.id }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                         linkRequestHandling = null
                     }

@@ -35,6 +35,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ElderCareAI"
         android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
         
         <activity

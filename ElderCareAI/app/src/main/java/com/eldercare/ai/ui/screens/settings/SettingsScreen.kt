@@ -64,6 +64,14 @@ fun SettingsScreen(
     // 加载当前用户信息
     LaunchedEffect(Unit) {
         currentUser = userService.getCurrentUser()
+        
+        // 每次进入设置页面时，同步一下最新的用户状态（看父母是否已确认绑定）
+        try {
+            userService.syncCurrentUserStatus()
+            currentUser = userService.getCurrentUser()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
     
     ElderCareScaffold(

@@ -77,6 +77,25 @@ fun FamilyGuardScreen(
     val shareHealth = isLinked && (personalSituation?.shareHealth ?: false)
     val shareContacts = isLinked && (personalSituation?.shareContacts ?: false)
     
+    // 每次进入页面时，同步一下最新的用户状态（看父母是否已确认绑定）
+    LaunchedEffect(currentUserId) {
+        if (!isLinked && currentUserId > 0) {
+            try {
+                val userService = com.eldercare.ai.auth.UserService(
+                    db.userDao(),
+                    db.familyRelationDao(),
+                    db.familyLinkRequestDao(),
+                    settingsManager
+                )
+                val syncManager = com.eldercare.ai.data.network.SyncManager(context)
+                syncManager.syncHealthAndPermissions()
+                userService.syncCurrentUserStatus()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
     ElderCareScaffold(
         title = "子女守护中心",
         onNavigateBack = onNavigateBack,

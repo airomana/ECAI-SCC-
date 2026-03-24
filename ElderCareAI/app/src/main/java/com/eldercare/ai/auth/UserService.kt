@@ -8,6 +8,9 @@ import com.eldercare.ai.data.dao.FamilyLinkRequestDao
 import com.eldercare.ai.data.entity.User
 import com.eldercare.ai.data.entity.FamilyRelation
 import com.eldercare.ai.data.entity.FamilyLinkRequestEntity
+import com.eldercare.ai.data.network.ApiClient
+import com.eldercare.ai.data.network.LoginRequest
+import com.eldercare.ai.data.network.RegisterRequest
 import java.security.SecureRandom
 import java.util.UUID
 
@@ -32,7 +35,27 @@ class UserService(
             val code = buildString {
                 repeat(10) {
                     append(alphabet[random.nextInt(alphabet.length)])
-                }
+                    /**
+     * 同步当前用户状态（例如：是否被父母确认了绑定）
+     */
+    suspend fun syncCurrentUserStatus() {
+        val currentUser = getCurrentUser() ?: return
+        try {
+            // 通过登录接口获取最新的用户信息（包含 familyId）
+            val apiService = ApiClient.apiService
+            // For now we use dummy code "123456" as VerificationCodeService handles SMS logic separately
+            val response = apiService.login(LoginRequest(currentUser.phone, "123456"))
+            
+            // 更新本地数据库中的 familyId
+            if (response.familyId != null && response.familyId != currentUser.familyId) {
+                val updatedUser = currentUser.copy(familyId = response.familyId)
+                userDao.insert(updatedUser)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
             }
             val existing = userDao.getByInviteCode(code)
             if (existing == null) return code
@@ -71,71 +94,64 @@ class UserService(
             return RegisterResult.Error("手机号格式不正确")
         }
         
-        // 检查手机号是否已注册
-        val existingUser = userDao.getByPhone(phone)
-        if (existingUser != null) {
-            return RegisterResult.Error("该手机号已注册，请直接登录")
-        }
-        
         // 验证角色
         if (role != "parent" && role != "child") {
             return RegisterResult.Error("角色参数错误")
         }
         
-        val now = System.currentTimeMillis()
-        
-        if (role == "parent") {
-            // 父母端注册：生成邀请码和家庭ID
-            val code = generateInviteCode()
-            val familyId = generateFamilyId()
+        try {
+            // 调用云端 API 进行注册
+            val apiService = ApiClient.apiService
+            val response = apiService.register(RegisterRequest(phone, role, inviteCode))
             
+            val now = System.currentTimeMillis()
+            
+            // 将云端返回的用户信息同步到本地 Room 数据库
             val user = User(
-                phone = phone,
-                role = role,
-                inviteCode = code,
-                familyId = familyId,
+                id = response.id,
+                phone = response.phone,
+                role = response.role,
+                inviteCode = response.inviteCode,
+                familyId = response.familyId,
                 createdAt = now,
                 lastLoginAt = now
             )
             
-            val userId = userDao.insert(user)
-            val savedUser = user.copy(id = userId)
-            // 保存当前用户信息
-            settingsManager.setCurrentUserId(userId)
-            settingsManager.setUserRole(role)
-            return RegisterResult.Success(savedUser, inviteCode = code, linkPending = false)
-        } else {
-            // 子女端注册：直接注册，不需要邀请码（后续可在首页绑定）
-            val user = User(
-                phone = phone,
-                role = role,
-                createdAt = now,
-                lastLoginAt = now
-            )
-            
-            val userId = userDao.insert(user)
-            val savedUser = user.copy(id = userId)
-            
-            // 如果提供了邀请码，尝试创建绑定申请
-            if (!inviteCode.isNullOrBlank()) {
-                val parentUser = userDao.getByInviteCode(inviteCode)
-                if (parentUser != null && parentUser.role == "parent") {
-                    familyLinkRequestDao.insert(
-                        FamilyLinkRequestEntity(
-                            parentUserId = parentUser.id,
-                            childUserId = userId,
-                            status = "pending",
-                            createdAt = now
-                        )
-                    )
-                }
+            // 使用 insertOrUpdate 策略，如果已存在则覆盖
+            val existingUser = userDao.getByPhone(phone)
+            if (existingUser != null) {
+                 // Update instead of insert if it already exists locally, though usually room handles conflict if configured
+                 userDao.insert(user) // assuming replace strategy or we just rely on the API success
+            } else {
+                 userDao.insert(user)
             }
             
             // 保存当前用户信息
-            settingsManager.setCurrentUserId(userId)
-            settingsManager.setUserRole(role)
+            settingsManager.setCurrentUserId(response.id)
+            settingsManager.setUserRole(response.role)
             
-            return RegisterResult.Success(savedUser, inviteCode = null, linkPending = false)
+            // 如果提供了邀请码，尝试创建绑定申请
+            if (!inviteCode.isNullOrBlank()) {
+                try {
+                    ApiClient.apiService.requestLink(response.id, inviteCode)
+                    return RegisterResult.Success(
+                        user = user,
+                        inviteCode = null,
+                        linkPending = true
+                    )
+                } catch (e: Exception) {
+                    // Ignore for now, allow registration to succeed
+                }
+            }
+            
+            return RegisterResult.Success(
+                user = user,
+                inviteCode = response.inviteCode,
+                linkPending = false
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return RegisterResult.Error("网络请求失败，或邀请码无效: ${e.message}")
         }
     }
     
@@ -143,24 +159,42 @@ class UserService(
      * 登录
      */
     suspend fun login(phone: String): LoginResult {
-        if (!isValidPhone(phone)) {
-            return LoginResult.Error("手机号格式不正确")
+        try {
+            val apiService = ApiClient.apiService
+            // For now we use dummy code "123456" as VerificationCodeService handles SMS logic separately
+            val response = apiService.login(LoginRequest(phone, "123456"))
+            
+            val now = System.currentTimeMillis()
+            val user = User(
+                id = response.id,
+                phone = response.phone,
+                role = response.role,
+                inviteCode = response.inviteCode,
+                familyId = response.familyId,
+                createdAt = now,
+                lastLoginAt = now
+            )
+            
+            // Sync with local Room database
+            val existingUser = userDao.getByPhone(phone)
+            if (existingUser != null) {
+                userDao.update(user.copy(id = existingUser.id)) // replace logic
+            } else {
+                userDao.insert(user)
+            }
+            
+            // 同步健康档案和权限信息 (We don't have context here, so we skip it or fetch it differently, 
+            // but the UI will trigger sync anyway on login so we can remove this line)
+            
+            // 保存当前用户信息
+            settingsManager.setCurrentUserId(response.id)
+            settingsManager.setUserRole(response.role)
+            
+            return LoginResult.Success(user)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return LoginResult.Error("登录失败，请检查网络或账号是否存在")
         }
-        
-        val user = userDao.getByPhone(phone)
-        if (user == null) {
-            return LoginResult.Error("该手机号未注册，请先注册")
-        }
-        
-        // 更新最后登录时间
-        val updatedUser = user.copy(lastLoginAt = System.currentTimeMillis())
-        userDao.update(updatedUser)
-        
-        // 保存当前用户信息
-        settingsManager.setCurrentUserId(updatedUser.id)
-        settingsManager.setUserRole(updatedUser.role)
-        
-        return LoginResult.Success(updatedUser)
     }
     
     /**
@@ -192,28 +226,37 @@ class UserService(
             return LinkResult.Error("您已经关联了家庭")
         }
         
-        val parentUser = userDao.getByInviteCode(inviteCode)
-        if (parentUser == null) {
-            return LinkResult.Error("邀请码无效")
-        }
-        
-        if (parentUser.role != "parent") {
-            return LinkResult.Error("邀请码无效")
-        }
-        
-        val existing = familyLinkRequestDao.getPending(parentUser.id, userId, "pending")
-        if (existing != null) {
+        try {
+            // Re-register with invite code to link on server
+            val apiService = ApiClient.apiService
+            apiService.requestLink(childUser.id, inviteCode)
+            
             return LinkResult.Pending
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Print actual error message from server if available
+            return LinkResult.Error("关联失败，请检查网络或邀请码是否正确: ${e.message}")
         }
-        familyLinkRequestDao.insert(
-            FamilyLinkRequestEntity(
-                parentUserId = parentUser.id,
-                childUserId = userId,
-                status = "pending",
-                createdAt = System.currentTimeMillis()
-            )
-        )
-        return LinkResult.Pending
+    }
+    
+    /**
+     * 同步当前用户状态（例如：是否被父母确认了绑定）
+     */
+    suspend fun syncCurrentUserStatus() {
+        val currentUser = getCurrentUser() ?: return
+        try {
+            // 通过登录接口获取最新的用户信息（包含 familyId）
+            val apiService = ApiClient.apiService
+            val response = apiService.login(LoginRequest(currentUser.phone, "123456"))
+            
+            // 更新本地数据库中的 familyId
+            if (response.familyId != null && response.familyId != currentUser.familyId) {
+                val updatedUser = currentUser.copy(familyId = response.familyId)
+                userDao.update(updatedUser)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
     
     /**

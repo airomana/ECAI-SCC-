@@ -65,6 +65,25 @@ fun ChildHomeScreen(
     var bindError by remember { mutableStateOf<String?>(null) }
     var isBinding by remember { mutableStateOf(false) }
     
+    // 每次进入页面时，同步一下最新的用户状态（看父母是否已确认绑定）
+    LaunchedEffect(currentUserId) {
+        if (!isLinked && currentUserId > 0) {
+            try {
+                val userService = com.eldercare.ai.auth.UserService(
+                    db.userDao(),
+                    db.familyRelationDao(),
+                    db.familyLinkRequestDao(),
+                    settingsManager
+                )
+                val syncManager = com.eldercare.ai.data.network.SyncManager(context)
+                syncManager.syncHealthAndPermissions()
+                userService.syncCurrentUserStatus()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
     // 周报相关状态
     var showWeeklyReportDialog by remember { mutableStateOf(false) }
     var isGeneratingReport by remember { mutableStateOf(false) }
