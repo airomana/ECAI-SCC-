@@ -48,14 +48,14 @@ class FoodDetector(private val context: Context) {
     suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
             if (isInitialized) return@withContext true
-            
+
             // 准备本地模型文件
             val modelDir = prepareModelFiles()
             if (modelDir != null) {
                 val localInit = localDetector.nativeInit(modelDir)
                 Log.d(TAG, "Local YoloDetector init: $localInit")
             }
-            
+
             isInitialized = true
             Log.d(TAG, "FoodDetector initialized")
             isInitialized
@@ -72,14 +72,14 @@ class FoodDetector(private val context: Context) {
         try {
             val dir = File(context.filesDir, "fridge_models")
             if (!dir.exists()) dir.mkdirs()
-            
+
             val modelFiles = arrayOf(
-                "category.bin", 
-                "category.bin.param", 
-                "freshness_fruit_and_vegetables.bin", 
+                "category.bin",
+                "category.bin.param",
+                "freshness_fruit_and_vegetables.bin",
                 "freshness_fruit_and_vegetables.param"
             )
-            
+
             for (fileName in modelFiles) {
                 val outFile = File(dir, fileName)
                 // 如果文件不存在或需要更新，则复制
@@ -97,7 +97,7 @@ class FoodDetector(private val context: Context) {
             return null
         }
     }
-    
+
     /**
      * 检测图片中的食材
      */
@@ -122,7 +122,7 @@ class FoodDetector(private val context: Context) {
             val localResults = localDetector.nativeDetectObjects(bitmap)
             if (localResults != null && localResults.isNotEmpty()) {
                 Log.i(TAG, "Detected ${localResults.size} foods using local model")
-                val foods = localResults.map { 
+                val foods = localResults.map {
                     DetectedFood(
                         name = it.className,
                         category = normalizeCategory(""), // 本地模型可能直接输出名称
@@ -132,7 +132,7 @@ class FoodDetector(private val context: Context) {
                         clarity = "清楚"
                     )
                 }
-                
+
                 // 如果本地识别结果非常自信，可以直接返回，或者作为云端的补充
                 // 这里暂定：如果本地有结果，且不是强制要求高精度，则直接返回
                 if (model != "qwen-vl-max") {
