@@ -276,7 +276,7 @@ fun MenuScanScreen(
                                         ragRecords = ragRecords
                                     )
                                 } else {
-                                    llmService.generateDishAdviceFromProfileOnly(
+                                    llmService.generatePlainDescription(
                                         dishName = candidate.name,
                                         healthProfile = healthProfile
                                     )
@@ -289,7 +289,7 @@ fun MenuScanScreen(
                             null
                         }
 
-                        val finalAdvice = ragAdvice ?: basePersonalizedAdvice
+                        val finalAdvice = ragAdvice ?: personalizedAdvice
                         
                         // 调试日志：确保风险等级和建议匹配
                         android.util.Log.d("MenuScan", "菜品: ${candidate.name}, 风险等级: ${riskResult.riskLevel}, 建议: $finalAdvice")
