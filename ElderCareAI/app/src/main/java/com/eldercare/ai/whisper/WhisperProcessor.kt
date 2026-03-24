@@ -75,7 +75,7 @@ class WhisperProcessor private constructor(context: Context) {
     /**
      * 从assets复制模型文件到内部存储
      */
-    fun initFromAssets(context: Context, assetFileName: String = "ggml-tiny-q8_0.bin"): Boolean {
+    fun initFromAssets(context: Context, assetFileName: String = "ggml-base-q5_1.bin"): Boolean {
         Log.d(TAG, "Initializing Whisper with model: $assetFileName")
         val modelDir = File(context.filesDir, "whisper")
         if (!modelDir.exists()) {

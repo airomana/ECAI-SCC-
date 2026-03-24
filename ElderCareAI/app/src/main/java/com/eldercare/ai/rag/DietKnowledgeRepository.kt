@@ -135,7 +135,7 @@ class DietKnowledgeRepository private constructor(
 
                     val disease = cells.getOrNull(0)?.trim().orEmpty()
                     val keyword = cells.getOrNull(1)?.trim().orEmpty()
-                    val riskLevel = cells.getOrNull(2)?.trim().ifBlank { "MEDIUM" }
+                    val riskLevel = cells.getOrNull(2)?.trim()?.ifBlank { "MEDIUM" } ?: "MEDIUM"
                     val advice = cells.getOrNull(3)?.trim().orEmpty()
                     val source = cells.getOrNull(4)?.trim().orEmpty()
 
