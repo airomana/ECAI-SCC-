@@ -29,8 +29,22 @@ class LlmService private constructor(private val context: Context) {
             redactHeader("Authorization")
         }
 
+        // 强制将响应 Content-Type 设为 UTF-8，防止中文乱码
+        val utf8Interceptor = okhttp3.Interceptor { chain ->
+            val response = chain.proceed(chain.request())
+            val contentType = response.header("Content-Type") ?: "application/json"
+            if (!contentType.contains("charset", ignoreCase = true)) {
+                response.newBuilder()
+                    .header("Content-Type", "$contentType; charset=utf-8")
+                    .build()
+            } else {
+                response
+            }
+        }
+
         val okHttpClient = OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)
+            .addInterceptor(utf8Interceptor)
             .connectTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -39,7 +53,9 @@ class LlmService private constructor(private val context: Context) {
         val retrofit = Retrofit.Builder()
             .baseUrl("https://dashscope.aliyuncs.com/api/v1/services/aigc/")
             .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(
+                com.google.gson.GsonBuilder().setLenient().create()
+            ))
             .build()
 
         api = retrofit.create(DashScopeApi::class.java)
@@ -129,13 +145,20 @@ class LlmService private constructor(private val context: Context) {
         userName: String? = null
     ): String? = withContext(Dispatchers.IO) {
         try {
-            if (!config.isConfigured() || !config.isEnabled(context)) return@withContext null
+            val configured = config.isConfigured()
+            val enabled = config.isEnabled(context)
+            Log.d(TAG, "generateConversationReply: configured=$configured, enabled=$enabled, apiKey=${config.API_KEY.take(8)}..., model=${config.MODEL}")
+            if (!configured || !enabled) {
+                Log.w(TAG, "LLM skipped: configured=$configured, enabled=$enabled")
+                return@withContext null
+            }
 
             val name = userName?.takeIf { it.isNotBlank() } ?: "您"
             val systemPrompt = "你是一个温暖贴心的老年人陪伴助手，名叫小助手。" +
-                "你的回应要：语言亲切自然像家人，用简单大白话，根据情绪给予关怀，" +
-                "控制在40字以内，适合语音播报，语气温和让老人感受到陪伴。" +
-                "称呼老人为\"${name}\"。"
+                "你的回应要：语言亲切自然像家人，用简单大白话，语气温和让老人感受到陪伴，控制在50字以内，适合语音播报。" +
+                "称呼老人为\"${name}\"。" +
+                "重要规则：如果老人问了具体问题（如饮食、健康、天气、生活等），必须先给出实质性的简短回答，再加一句关怀。" +
+                "不要只给情感回应而忽略老人的实际问题。"
 
             val messages = mutableListOf<DashScopeMessage>()
             messages.add(DashScopeMessage(role = "system", content = systemPrompt))
@@ -151,17 +174,22 @@ class LlmService private constructor(private val context: Context) {
                 parameters = DashScopeParameters(temperature = 0.8, max_tokens = 150, top_p = 0.9)
             )
 
+            Log.d(TAG, "Calling DashScope API, message count=${messages.size}, userMsg='${userMessage.take(20)}'")
             val response = api.generateText(
                 authorization = "Bearer ${config.API_KEY}",
                 request = request
             )
 
             if (response.isSuccessful) {
-                return@withContext response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+                val content = response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+                Log.d(TAG, "API success, reply='${content?.take(50)}'")
+                return@withContext content
             }
+            val errorBody = response.errorBody()?.string()
+            Log.e(TAG, "API failed: code=${response.code()}, error=$errorBody")
             return@withContext null
         } catch (e: Exception) {
-            Log.e(TAG, "generateConversationReply error", e)
+            Log.e(TAG, "generateConversationReply error: ${e.javaClass.simpleName}: ${e.message}", e)
             return@withContext null
         }
     }

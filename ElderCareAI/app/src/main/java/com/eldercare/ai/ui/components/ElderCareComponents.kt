@@ -65,26 +65,26 @@ fun ElderCareScaffold(
         modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets.statusBars,
         topBar = {
-            if (title != null) {
-                CenterAlignedTopAppBar(
-                    title = { Text(title, style = titleTextStyle) },
-                    navigationIcon = {
-                        if (onNavigateBack != null) {
-                            IconButton(
-                                onClick = onNavigateBack,
-                                modifier = Modifier.size(ElderCareDimens.IconButtonSize)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ArrowBack,
-                                    contentDescription = "返回"
-                                )
-                            }
+            // 始终渲染 CenterAlignedTopAppBar，避免 SubcomposeLayout slot 数量变化导致 SlotTable 崩溃
+            // title == null 时用空 Text 占位，保持 slot 结构稳定
+            CenterAlignedTopAppBar(
+                title = { Text(title ?: "", style = titleTextStyle) },
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.size(ElderCareDimens.IconButtonSize)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = "返回"
+                            )
                         }
-                    },
-                    actions = actions,
-                    colors = topAppBarColors
-                )
-            }
+                    }
+                },
+                actions = actions,
+                colors = topAppBarColors
+            )
         }
     ) { padding ->
         content(padding)

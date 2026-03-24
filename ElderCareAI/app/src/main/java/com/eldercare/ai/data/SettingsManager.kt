@@ -101,11 +101,11 @@ class SettingsManager(context: Context) {
     }
     
     fun isParentRole(): Boolean {
-        return getUserRole() == "parent"
+        return isLoggedIn() && getUserRole() == "parent"
     }
     
     fun isChildRole(): Boolean {
-        return getUserRole() == "child"
+        return isLoggedIn() && getUserRole() == "child"
     }
     
     // 当前登录用户ID
@@ -128,6 +128,6 @@ class SettingsManager(context: Context) {
     
     fun logout() {
         setCurrentUserId(null)
-        setUserRole(DEFAULT_USER_ROLE)
+        setUserRole("")  // 清空角色，不保留默认值，避免影响下次登录的角色判断
     }
 }
