@@ -76,36 +76,43 @@ std::string WhisperProcessor::transcribe(const float* audio_data, int length) {
             LOGE("Falling back to simulation mode");
             // 回退到模拟模式，继续执行下面的代码
         } else {
-            // 使用真实的whisper.cpp进行识别 - 使用最简化的快速配置
+            // 使用真实的whisper.cpp进行识别 - 速度优先配置
             struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
             
-            // 最简化的快速配置
-            params.print_progress = false;
-            params.print_special = false;
-            params.print_realtime = false;
-            params.translate = false;
-            params.language = "zh";  // 中文
+            params.print_progress   = false;
+            params.print_special    = false;
+            params.print_realtime   = false;
+            params.translate        = false;
+            params.language         = "zh";       // 固定中文，跳过语言检测
+            params.detect_language  = false;      // 不自动检测语言（节省约10-15%时间）
             
-            // 使用更多线程以加快速度（Android设备通常有4-8核）
-            params.n_threads = 6;  // 增加到6线程
+            // 线程数：tiny模型较小，6线程能充分利用多核
+            params.n_threads = 6;
             
-            params.offset_ms = 0;
-            params.no_context = true;  // 不使用上下文可以加快速度
-            params.single_segment = false;  // 不使用single_segment，保持默认行为
+            params.offset_ms        = 0;
+            params.no_context       = true;       // 不使用历史上下文，加快速度
+            params.single_segment   = true;       // 短句强制单段输出，减少分段开销
             
             // 计算音频时长（用于性能统计和优化）
             float audio_duration = processed_length / 16000.0f;
             
-            params.suppress_blank = true;
-            params.suppress_nst = false;
-            params.temperature = 0.0f;
-            params.max_len = 0;  // 使用默认值，不限制长度
+            params.suppress_blank   = true;
+            params.suppress_nst     = true;       // 抑制非语音token
+            params.temperature      = 0.0f;       // 贪心解码，temperature=0最快
+            params.max_len          = 0;
             params.token_timestamps = false;
-            params.audio_ctx = 0;  // 使用默认值，不要减小
-            params.prompt_tokens = nullptr;
-            params.prompt_n_tokens = 0;
-            params.no_timestamps = true;  // 不需要时间戳
-            params.detect_language = false;  // 已指定语言
+            params.no_timestamps    = true;       // 不生成时间戳，减少输出处理
+            
+            // audio_ctx：限制为实际音频帧数，避免处理多余的空白帧（最大1500）
+            // 每帧160个采样点（10ms @ 16kHz），加128帧余量
+            int audio_frames = processed_length / 160;
+            params.audio_ctx = std::min(audio_frames + 128, 1500);
+            
+            params.prompt_tokens    = nullptr;
+            params.prompt_n_tokens  = 0;
+            
+            // greedy参数：best_of=1，只取最优候选
+            params.greedy.best_of   = 1;
             
             // 记录开始时间（用于性能统计）
             auto start_time = std::chrono::high_resolution_clock::now();

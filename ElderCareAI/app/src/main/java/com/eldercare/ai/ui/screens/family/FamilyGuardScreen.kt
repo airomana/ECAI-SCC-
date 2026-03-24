@@ -1,5 +1,6 @@
 package com.eldercare.ai.ui.screens.family
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
@@ -18,9 +20,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eldercare.ai.rememberElderCareDatabase
+import com.eldercare.ai.companion.ConversationManager
+import com.eldercare.ai.companion.EmotionAnalyzer
 import com.eldercare.ai.data.SettingsManager
 import com.eldercare.ai.data.entity.DiaryEntryEntity
 import com.eldercare.ai.data.entity.EmergencyContactEntity
+import com.eldercare.ai.data.entity.EmotionLogEntity
 import com.eldercare.ai.data.entity.HealthProfile
 import com.eldercare.ai.data.entity.PersonalSituationEntity
 import com.eldercare.ai.data.entity.ProfileEditRequestEntity
@@ -33,13 +38,15 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import android.content.Intent
+import android.net.Uri
 
 /**
  * 子女远程守护中心
  * 功能：
- * 1. 查看父母每日饮食记录
- * 2. 设置饮食禁忌
- * 3. 查看周报
+ * 1. 查看父母每日聊天陪伴记录
+ * 2. 设置健康档案
+ * 3. 查看情绪周报
  * 4. 异常警报
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +69,7 @@ fun FamilyGuardScreen(
     val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
     val personalSituation by db.personalSituationDao().get().collectAsStateWithLifecycle(initialValue = null)
     val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val emotionLogs by db.emotionLogDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     var showWeeklyReport by remember { mutableStateOf(false) }
     var showAlerts by remember { mutableStateOf(false) }
     var showSuggestDialog by remember { mutableStateOf(false) }
@@ -130,12 +138,15 @@ fun FamilyGuardScreen(
             // 本周统计卡片
             WeeklyStatsCard(diaryEntries = diaryEntries)
             
+            // 情绪日志卡片
+            EmotionLogCard(emotionLogs = emotionLogs)
+
             // 异常警报卡片
             AlertsCard(diaryEntries = diaryEntries, healthProfile = healthProfile)
             
-            // 最近饮食记录
+            // 最近陪伴记录
             Text(
-                text = "最近饮食记录",
+                text = "最近陪伴记录",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -543,28 +554,76 @@ fun WeeklyReportDialog(
     diaryEntries: List<DiaryEntryEntity>,
     onDismiss: () -> Unit
 ) {
-    val report = remember(diaryEntries) {
-        generateWeeklyReport(diaryEntries)
+    val context = LocalContext.current
+    val db = rememberElderCareDatabase()
+    val scope = rememberCoroutineScope()
+    val conversationManager = remember { ConversationManager.getInstance(context, db) }
+    val healthProfile by db.healthProfileDao().get().collectAsStateWithLifecycle(initialValue = null)
+    val contacts by db.emergencyContactDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    var isGenerating by remember { mutableStateOf(true) }
+    var reportContent by remember { mutableStateOf<String?>(null) }
+    var reportLogs by remember { mutableStateOf<List<EmotionLogEntity>>(emptyList()) }
+    var showSendOptions by remember { mutableStateOf(false) }
+
+    LaunchedEffect(diaryEntries) {
+        val weekAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+        reportLogs = db.emotionLogDao().getByTimeRange(weekAgo, System.currentTimeMillis())
+        val report = conversationManager.generateWeeklyReport(healthProfile?.name)
+        reportContent = report
+        isGenerating = false
     }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("本周饮食报告") },
+        title = { Text("智能情绪陪伴周报") },
         text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                report.forEach { line ->
-                    Text(line)
+            if (isGenerating) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text("正在生成智能周报...")
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(reportContent ?: "暂无内容")
+                    if (!reportContent.isNullOrBlank()) {
+                        Button(
+                            onClick = { showSendOptions = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("发送给子女")
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
+            TextButton(onClick = onDismiss) { Text("关闭") }
         }
     )
+
+    // 发送方式选择
+    if (showSendOptions && !reportContent.isNullOrBlank()) {
+        SendReportDialog(
+            reportContent = reportContent!!,
+            contacts = contacts,
+            onDismiss = { showSendOptions = false },
+            onSent = {
+                // 标记本周所有日志为已发送
+                scope.launch {
+                    reportLogs.filter { !it.sentToFamily }.forEach { log ->
+                        db.emotionLogDao().markAsSent(log.id)
+                    }
+                }
+                showSendOptions = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -602,37 +661,256 @@ fun AlertsDialog(
 }
 
 /**
- * 生成周报
+ * 发送周报对话框（短信/分享）
  */
-private fun generateWeeklyReport(diaryEntries: List<DiaryEntryEntity>): List<String> {
-    val now = System.currentTimeMillis()
-    val weekAgo = now - 7 * 24 * 60 * 60 * 1000L
-    val weeklyEntries = diaryEntries.filter { it.date >= weekAgo }
-    
+@Composable
+fun SendReportDialog(
+    reportContent: String,
+    contacts: List<EmergencyContactEntity>,
+    onDismiss: () -> Unit,
+    onSent: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    var phoneNumber by remember { mutableStateOf("") }
+
+    // 预填第一个联系人号码
+    LaunchedEffect(contacts) {
+        if (phoneNumber.isBlank() && contacts.isNotEmpty()) {
+            phoneNumber = contacts.first().phone
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发送周报给子女") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("选择发送方式：", style = MaterialTheme.typography.bodyMedium)
+
+                // 快速选择联系人
+                if (contacts.isNotEmpty()) {
+                    Text("快速选择：", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    contacts.take(5).forEach { contact ->
+                        OutlinedButton(
+                            onClick = { phoneNumber = contact.phone },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = if (phoneNumber == contact.phone)
+                                ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                            else ButtonDefaults.outlinedButtonColors()
+                        ) {
+                            Text("${contact.name.ifBlank { "联系人" }}  ${contact.phone}")
+                        }
+                    }
+                }
+
+                // 手动输入号码
+                OutlinedTextField(
+                    value = phoneNumber,
+                    onValueChange = { phoneNumber = it.filter { c -> c.isDigit() }.take(11) },
+                    label = { Text("子女手机号") },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Phone
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Button(
+                    onClick = {
+                        if (phoneNumber.length >= 7) {
+                            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = Uri.parse("smsto:$phoneNumber")
+                                putExtra("sms_body", reportContent)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.util.Log.e("SendReport", "SMS failed", e)
+                            }
+                        }
+                        onSent()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = phoneNumber.length >= 7
+                ) {
+                    Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("发送短信")
+                }
+
+                // 系统分享
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, reportContent)
+                            putExtra(Intent.EXTRA_SUBJECT, "父母情绪陪伴周报")
+                        }
+                        context.startActivity(Intent.createChooser(intent, "分享周报"))
+                        onSent()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("其他方式分享")
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * 情绪日志卡片（展示近7天情绪趋势，含简单条形图）
+ */
+@Composable
+fun EmotionLogCard(emotionLogs: List<EmotionLogEntity>) {
+    if (emotionLogs.isEmpty()) return
+    val sdf = remember { SimpleDateFormat("MM/dd", Locale.getDefault()) }
+    val recent7 = remember(emotionLogs) { emotionLogs.sortedBy { it.dayTimestamp }.takeLast(7) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("近期情绪日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+            // 情绪趋势条形图
+            if (recent7.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    recent7.forEach { log ->
+                        val barColor = when (log.dominantEmotion) {
+                            "开心", "满意" -> MaterialTheme.colorScheme.primary
+                            "孤单", "难过" -> MaterialTheme.colorScheme.secondary
+                            "担心", "不适" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.4f)
+                        }
+                        val heightFraction = when (log.dominantEmotion) {
+                            "开心", "满意" -> 1.0f
+                            "平静" -> 0.6f
+                            "孤单", "担心" -> 0.5f
+                            "难过", "不适" -> 0.4f
+                            else -> 0.5f
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Bottom
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(heightFraction)
+                                    .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                    .background(barColor)
+                            )
+                        }
+                    }
+                }
+                // 日期标签
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    recent7.forEach { log ->
+                        Text(
+                            sdf.format(Date(log.dayTimestamp)),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+
+            // 文字列表
+            recent7.reversed().forEach { log ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        sdf.format(Date(log.dayTimestamp)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = when (log.dominantEmotion) {
+                            "开心", "满意" -> MaterialTheme.colorScheme.primaryContainer
+                            "孤单", "难过" -> MaterialTheme.colorScheme.secondaryContainer
+                            "担心", "不适" -> MaterialTheme.colorScheme.errorContainer
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
+                    ) {
+                        Text(
+                            log.dominantEmotion,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Text(
+                        "对话${log.conversationCount}次",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    // 已发送标记
+                    if (log.sentToFamily) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "已发送",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 生成本地周报
+ */
+private fun generateLocalWeeklyReport(weeklyEntries: List<DiaryEntryEntity>): List<String> {
     val report = mutableListOf<String>()
-    report.add("【本周饮食报告】")
+    report.add("【本周陪伴报告】")
     report.add("")
     
-    // 饮食规律性
+    // 陪伴规律性
     val daysWithEntries = weeklyEntries.map { 
         SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it.date))
     }.distinct().size
-    report.add("✅ 饮食规律性：本周${daysWithEntries}天有记录")
+    report.add("✅ 记录天数：本周${daysWithEntries}天有陪伴记录")
     
     // 情感观察
     val emotionStats = weeklyEntries.groupBy { it.emotion }
     val lonelyCount = emotionStats["孤单"]?.size ?: 0
-    if (lonelyCount > 0) {
-        report.add("💬 情感观察：父母说了${lonelyCount}次\"孤单\"相关的话，可能有些孤单，有空多陪陪他哦")
-    }
+    val worryCount = emotionStats["担心"]?.size ?: 0
     
-    // 营养提醒
-    val highFatKeywords = listOf("红烧", "油炸", "油", "肉", "肥")
-    val highFatCount = weeklyEntries.count { entry ->
-        highFatKeywords.any { entry.content.contains(it) }
+    if (lonelyCount > 0) {
+        report.add("💬 情感观察：父母说了${lonelyCount}次感到\"孤单\"的话，建议多抽空联系、陪伴。")
     }
-    if (highFatCount >= 3) {
-        report.add("⚠️ 营养提醒：本周高油高盐食物较多（${highFatCount}次），建议提醒父母注意饮食清淡")
+    if (worryCount > 0) {
+        report.add("⚠️ 心理关怀：父母表达了${worryCount}次\"担心\"或焦虑，记得打电话关心一下。")
+    }
+    if (lonelyCount == 0 && worryCount == 0) {
+        report.add("😊 情感状态：父母本周情绪比较稳定，继续保持哦！")
     }
     
     return report
@@ -650,19 +928,34 @@ private fun generateAlerts(
     val threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000L
     val recentEntries = diaryEntries.filter { it.date >= threeDaysAgo }
     
-    // 检查连续3天高油高盐
+    // 检查连续3天高油高盐饮食提及
     val highFatKeywords = listOf("红烧", "油炸", "油", "肉", "肥")
     val highFatCount = recentEntries.count { entry ->
         highFatKeywords.any { entry.content.contains(it) }
     }
     if (highFatCount >= 3) {
-        alerts.add("连续3天高油高盐食物较多，建议提醒父母注意饮食")
+        alerts.add("连续3天提及高油高盐食物，建议提醒父母注意饮食")
     }
     
     // 检查孤独信号
     val lonelyCount = recentEntries.count { it.emotion == "孤单" }
     if (lonelyCount >= 3) {
-        alerts.add("父母连续3天表达孤独情绪，建议多陪伴")
+        alerts.add("父母连续3天表达孤独情绪，建议多陪伴和联系")
+    }
+    
+    // 检查负面情绪信号
+    val worryCount = recentEntries.count { it.emotion == "担心" }
+    if (worryCount >= 3) {
+        alerts.add("父母最近可能有些焦虑或担心，建议打电话关心一下")
+    }
+    
+    // 检查身体不适关键词
+    val sickKeywords = listOf("疼", "痛", "不舒服", "难受", "生病", "头晕", "乏力")
+    val sickCount = recentEntries.count { entry ->
+        sickKeywords.any { entry.content.contains(it) }
+    }
+    if (sickCount > 0) {
+        alerts.add("父母最近提及了身体不适，请及时关注健康状况")
     }
     
     // 检查禁忌食物
@@ -670,11 +963,11 @@ private fun generateAlerts(
         recentEntries.forEach { entry ->
             healthProfile.allergies.forEach { allergy ->
                 if (entry.content.contains(allergy)) {
-                    alerts.add("父母可能摄入了禁忌食物：$allergy")
+                    alerts.add("父母聊天中提及了可能的禁忌食物：$allergy")
                 }
             }
         }
     }
     
-    return alerts
+    return alerts.distinct()
 }

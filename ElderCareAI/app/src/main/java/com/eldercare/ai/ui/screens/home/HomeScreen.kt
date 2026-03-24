@@ -114,8 +114,8 @@ fun HomeScreen(
                 )
 
                 ElderFunctionButton(
-                    text = "今天吃了啥",
-                    subtitle = "说一说，我来帮您记",
+                    text = "聊天陪伴",
+                    subtitle = "聊聊天，我来陪您",
                     icon = Icons.Default.Mic,
                     onClick = onNavigateToVoiceDiary,
                     backgroundColor = MaterialTheme.colorScheme.tertiary,

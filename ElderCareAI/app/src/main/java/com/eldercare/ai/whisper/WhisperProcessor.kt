@@ -131,11 +131,22 @@ class WhisperProcessor private constructor(context: Context) {
             return null
         }
         
-        Log.d(TAG, "Starting transcription, audio data size: ${audioData.size} samples (${audioData.size / 16000f} seconds)")
+        // VAD：截断尾部静音，减少送入Whisper的音频长度
+        val trimmed = trimSilence(audioData)
+        val originalSec = audioData.size / 16000f
+        val trimmedSec = trimmed.size / 16000f
+        Log.d(TAG, "VAD trim: ${String.format("%.2f", originalSec)}s -> ${String.format("%.2f", trimmedSec)}s (${trimmed.size} samples)")
+        
+        if (trimmed.size < 1600) { // 少于0.1秒，不处理
+            Log.w(TAG, "Audio too short after VAD trim")
+            return null
+        }
         
         try {
-            val result = nativeTranscribe(audioData)
-            Log.d(TAG, "Transcription completed, result length: ${result?.length ?: 0}")
+            val startMs = System.currentTimeMillis()
+            val result = nativeTranscribe(trimmed)
+            val elapsedMs = System.currentTimeMillis() - startMs
+            Log.d(TAG, "Transcription completed in ${elapsedMs}ms (${String.format("%.2f", trimmedSec / (elapsedMs / 1000f))}x realtime), result length: ${result?.length ?: 0}")
             
             // 如果返回空字符串，也视为失败
             if (result.isNullOrBlank()) {
@@ -151,6 +162,27 @@ class WhisperProcessor private constructor(context: Context) {
             Log.e(TAG, "Error during transcription", e)
             return null
         }
+    }
+
+    /**
+     * 简单VAD：截断尾部静音
+     * 从末尾向前找最后一个能量超过阈值的位置，保留到该位置+0.3秒余量
+     */
+    private fun trimSilence(audio: FloatArray, silenceThreshold: Float = 0.01f, paddingSamples: Int = 4800): FloatArray {
+        val windowSize = 1600 // 100ms窗口
+        var lastActiveWindow = 0
+        var i = 0
+        while (i + windowSize <= audio.size) {
+            var energy = 0f
+            for (j in i until i + windowSize) energy += audio[j] * audio[j]
+            energy /= windowSize
+            if (energy > silenceThreshold * silenceThreshold) {
+                lastActiveWindow = i + windowSize
+            }
+            i += windowSize
+        }
+        val endSample = minOf(lastActiveWindow + paddingSamples, audio.size)
+        return if (endSample < audio.size * 0.9f) audio.copyOf(endSample) else audio
     }
     
     /**

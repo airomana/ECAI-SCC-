@@ -24,6 +24,12 @@ interface DiaryEntryDao {
     @Query("DELETE FROM diary_entry WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    @Query("SELECT * FROM diary_entry WHERE date >= :from AND date <= :to ORDER BY date DESC")
+    suspend fun getByTimeRange(from: Long, to: Long): List<DiaryEntryEntity>
+
+    @Query("SELECT * FROM diary_entry ORDER BY date DESC LIMIT :limit")
+    suspend fun getLatest(limit: Int): List<DiaryEntryEntity>
+
     @Query("DELETE FROM diary_entry")
     suspend fun deleteAll()
 }

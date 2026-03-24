@@ -288,7 +288,7 @@ fun LoginScreen(
             }
         }
         
-        // 邀请码输入（子女端注册时）
+        // 邀请码输入（子女端注册时，可选）
         if (isRegisterMode && selectedRole == "child" && showInviteCode) {
             ElderCareTextField(
                 value = inviteCode,
@@ -296,8 +296,8 @@ fun LoginScreen(
                     inviteCode = it.trim().uppercase().take(24)
                     errorMessage = null
                 },
-                label = "邀请码",
-                placeholder = "请输入邀请码",
+                label = "邀请码（可选）",
+                placeholder = "可稍后在首页绑定",
                 leadingIcon = Icons.Default.Info,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 modifier = Modifier
@@ -307,7 +307,7 @@ fun LoginScreen(
             )
             
             Text(
-                text = "邀请码由父母端生成，请向父母获取",
+                text = "邀请码由父母端生成，也可以注册后在首页输入邀请码绑定",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -397,8 +397,7 @@ fun LoginScreen(
             enabled = !isLoading && !isSendingCode &&
                 phone.isNotBlank() &&
                 verificationCode.isNotBlank() &&
-                (!isRegisterMode || selectedRole != null) &&
-                (!isRegisterMode || selectedRole != "child" || inviteCode.isNotBlank()),
+                (!isRegisterMode || selectedRole != null),
             leadingIcon = if (isRegisterMode) Icons.Default.PersonAdd else Icons.Default.Login
         )
         
