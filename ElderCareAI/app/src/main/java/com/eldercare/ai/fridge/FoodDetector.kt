@@ -18,9 +18,13 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+import com.eldercare.ai.yolo.YoloDetector
+import java.io.File
+import java.io.FileOutputStream
+
 /**
  * 食材检测器
- * 使用通义千问（DashScope）视觉模型识别冰箱中的食材
+ * 支持端侧 (YOLO/NCNN) 与云端 (通义千问) 协同识别
  */
 class FoodDetector(private val context: Context) {
     
@@ -30,6 +34,7 @@ class FoodDetector(private val context: Context) {
     
     private var isInitialized = false
     private val llmService = LlmService.getInstance(context)
+    private val localDetector = YoloDetector()
     private val gson = Gson()
 
     data class ImageQualityResult(
@@ -43,6 +48,14 @@ class FoodDetector(private val context: Context) {
     suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
             if (isInitialized) return@withContext true
+            
+            // 准备本地模型文件
+            val modelDir = prepareModelFiles()
+            if (modelDir != null) {
+                val localInit = localDetector.nativeInit(modelDir)
+                Log.d(TAG, "Local YoloDetector init: $localInit")
+            }
+            
             isInitialized = true
             Log.d(TAG, "FoodDetector initialized")
             isInitialized
@@ -51,20 +64,46 @@ class FoodDetector(private val context: Context) {
             false
         }
     }
+
+    /**
+     * 将 assets 中的模型文件复制到私有目录，供原生代码读取
+     */
+    private fun prepareModelFiles(): String? {
+        try {
+            val dir = File(context.filesDir, "fridge_models")
+            if (!dir.exists()) dir.mkdirs()
+            
+            val modelFiles = arrayOf(
+                "category.bin", 
+                "category.bin.param", 
+                "freshness_fruit_and_vegetables.bin", 
+                "freshness_fruit_and_vegetables.param"
+            )
+            
+            for (fileName in modelFiles) {
+                val outFile = File(dir, fileName)
+                // 如果文件不存在或需要更新，则复制
+                if (!outFile.exists()) {
+                    context.assets.open("fridge/$fileName").use { input ->
+                        FileOutputStream(outFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+            return dir.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to prepare model files", e)
+            return null
+        }
+    }
     
     /**
      * 检测图片中的食材
      */
     suspend fun detectFoods(bitmap: Bitmap, model: String): FoodDetectionResult = withContext(Dispatchers.IO) {
         if (!isInitialized) {
-            Log.w(TAG, "Detector not initialized")
-            return@withContext FoodDetectionResult(
-                foods = emptyList(),
-                unknownCount = 0,
-                rawCount = 0,
-                modelUsed = model,
-                qualityHint = null
-            )
+            initialize()
         }
         
         try {
@@ -79,6 +118,35 @@ class FoodDetector(private val context: Context) {
                 )
             }
 
+            // 1. 尝试使用端侧模型识别
+            val localResults = localDetector.nativeDetectObjects(bitmap)
+            if (localResults != null && localResults.isNotEmpty()) {
+                Log.i(TAG, "Detected ${localResults.size} foods using local model")
+                val foods = localResults.map { 
+                    DetectedFood(
+                        name = it.className,
+                        category = normalizeCategory(""), // 本地模型可能直接输出名称
+                        confidence = it.confidence,
+                        boundingBox = BoundingBox(it.x, it.y, it.x + it.width, it.y + it.height),
+                        freshness = "未知", // 暂由后续逻辑或云端补充
+                        clarity = "清楚"
+                    )
+                }
+                
+                // 如果本地识别结果非常自信，可以直接返回，或者作为云端的补充
+                // 这里暂定：如果本地有结果，且不是强制要求高精度，则直接返回
+                if (model != "qwen-vl-max") {
+                    return@withContext FoodDetectionResult(
+                        foods = foods,
+                        unknownCount = 0,
+                        rawCount = foods.size,
+                        modelUsed = "local-yolo",
+                        qualityHint = null
+                    )
+                }
+            }
+
+            // 2. 如果本地没结果或需要云端增强，则调用云端
             val processed = preprocessBitmap(bitmap)
 
             // 将Bitmap转换为Base64

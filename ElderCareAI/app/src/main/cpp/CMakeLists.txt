@@ -63,7 +63,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/common
     # ${CMAKE_SOURCE_DIR}/ocr  # 暂时不需要
-    # ${CMAKE_SOURCE_DIR}/yolo  # 暂时不需要
+    ${CMAKE_SOURCE_DIR}/yolo
     ${CMAKE_SOURCE_DIR}/whisper
     # ${CMAKE_SOURCE_DIR}/utils  # 暂时不需要
 )
@@ -93,8 +93,8 @@ set(SOURCES
     # ocr/paddle_ocr.cpp
     # ocr/ocr_processor.cpp
     
-    # YOLO模块（暂时注释，需要OpenCV和NCNN）
-    # yolo/yolo_detector.cpp
+    # YOLO模块
+    yolo/yolo_detector.cpp
     # yolo/object_detector.cpp
     
     # Whisper模块
