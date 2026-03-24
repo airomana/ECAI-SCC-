@@ -74,7 +74,8 @@ import java.util.Locale
 @Composable
 fun PersonalSituationScreen(
     onNavigateBack: () -> Unit = {},
-    onboarding: Boolean = false
+    onboarding: Boolean = false,
+    onNavigateToHome: (() -> Unit)? = null
 ) {
     val db = rememberElderCareDatabase()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -122,10 +123,17 @@ fun PersonalSituationScreen(
         (filled * 100 / total).coerceIn(0, 100)
     }
 
+    // 必要信息：姓名 + 年龄/出生年
+    val requiredFilled = !healthProfile?.name.isNullOrBlank() &&
+        ((healthProfile?.age ?: 0) > 0 || (healthProfile?.birthYear ?: 0) > 0)
+
+    var showRequiredHint by remember { mutableStateOf(false) }
+
     ElderCareScaffold(
-        title = "个人情况（详细）",
-        onNavigateBack = onNavigateBack
+        title = if (onboarding) "完善个人信息" else "个人情况（详细）",
+        onNavigateBack = if (onboarding) null else onNavigateBack
     ) { padding ->
+        Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -430,7 +438,58 @@ fun PersonalSituationScreen(
                     }
                 }
             }
+
+            // onboarding 模式底部留出空间，避免被按钮遮挡
+            if (onboarding) {
+                item { Spacer(modifier = Modifier.height(100.dp)) }
+            }
         }
+
+        // onboarding 模式：底部固定"开始使用"按钮
+        if (onboarding && onNavigateToHome != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (showRequiredHint) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "请先填写姓名和年龄（点击「基础信息」填写）",
+                            modifier = Modifier.padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        if (requiredFilled) {
+                            onNavigateToHome()
+                        } else {
+                            showRequiredHint = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (requiredFilled) "开始使用 →" else "请先填写必要信息")
+                }
+                if (!requiredFilled) {
+                    Text(
+                        text = "必填：姓名、年龄（其余可稍后完善）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                }
+            }
+        }
+        } // end Box
     }
 
     if (showBasicDialog) {

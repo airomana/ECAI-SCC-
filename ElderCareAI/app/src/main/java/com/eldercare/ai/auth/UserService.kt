@@ -105,20 +105,7 @@ class UserService(
             settingsManager.setUserRole(role)
             return RegisterResult.Success(savedUser, inviteCode = code, linkPending = false)
         } else {
-            // 子女端注册：需要验证邀请码
-            if (inviteCode.isNullOrBlank()) {
-                return RegisterResult.Error("子女端注册需要邀请码")
-            }
-            
-            val parentUser = userDao.getByInviteCode(inviteCode)
-            if (parentUser == null) {
-                return RegisterResult.Error("邀请码无效")
-            }
-            
-            if (parentUser.role != "parent") {
-                return RegisterResult.Error("邀请码无效")
-            }
-            
+            // 子女端注册：直接注册，不需要邀请码（后续可在首页绑定）
             val user = User(
                 phone = phone,
                 role = role,
@@ -129,21 +116,26 @@ class UserService(
             val userId = userDao.insert(user)
             val savedUser = user.copy(id = userId)
             
-            // 创建绑定申请（需要父母确认后才真正绑定）
-            familyLinkRequestDao.insert(
-                FamilyLinkRequestEntity(
-                    parentUserId = parentUser.id,
-                    childUserId = userId,
-                    status = "pending",
-                    createdAt = now
-                )
-            )
+            // 如果提供了邀请码，尝试创建绑定申请
+            if (!inviteCode.isNullOrBlank()) {
+                val parentUser = userDao.getByInviteCode(inviteCode)
+                if (parentUser != null && parentUser.role == "parent") {
+                    familyLinkRequestDao.insert(
+                        FamilyLinkRequestEntity(
+                            parentUserId = parentUser.id,
+                            childUserId = userId,
+                            status = "pending",
+                            createdAt = now
+                        )
+                    )
+                }
+            }
             
-            // 保存当前用户信息（修复bug：子女端注册后也要保存角色）
+            // 保存当前用户信息
             settingsManager.setCurrentUserId(userId)
             settingsManager.setUserRole(role)
             
-            return RegisterResult.Success(savedUser, inviteCode = null, linkPending = true)
+            return RegisterResult.Success(savedUser, inviteCode = null, linkPending = false)
         }
     }
     

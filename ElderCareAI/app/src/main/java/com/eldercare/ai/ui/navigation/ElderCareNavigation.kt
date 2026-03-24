@@ -26,7 +26,6 @@ import com.eldercare.ai.ui.screens.family.ChildHomeScreen
 import com.eldercare.ai.ui.screens.role.RoleSelectionScreen
 import com.eldercare.ai.ui.screens.auth.LoginScreen
 import com.eldercare.ai.data.SettingsManager
-import com.eldercare.ai.data.ElderCareDatabase
 import com.eldercare.ai.auth.UserService
 import com.eldercare.ai.rememberElderCareDatabase
 import androidx.compose.ui.platform.LocalContext
@@ -49,7 +48,7 @@ fun ElderCareNavigation(
     val context = LocalContext.current
     val settingsManager = remember { SettingsManager.getInstance(context) }
     val db = rememberElderCareDatabase()
-    val userService = remember { 
+    val userService = remember {
         try {
             android.util.Log.d("ElderCareNavigation", "Creating UserService...")
             UserService(db.userDao(), db.familyRelationDao(), db.familyLinkRequestDao(), settingsManager)
@@ -58,52 +57,58 @@ fun ElderCareNavigation(
             null
         }
     }
-    
-    var isLoggedIn by remember { mutableStateOf(settingsManager.isLoggedIn()) }
-    var userRole by remember { mutableStateOf(settingsManager.getUserRole()) }
-    
-    // 检查登录状态
-    LaunchedEffect(Unit) {
-        if (userService != null) {
-            try {
-                android.util.Log.d("ElderCareNavigation", "Checking login status...")
-                if (!isLoggedIn) {
-                    // 尝试从数据库获取当前用户
-                    val currentUser = userService.getCurrentUser()
-                    if (currentUser != null) {
-                        isLoggedIn = true
-                        userRole = currentUser.role
-                        android.util.Log.d("ElderCareNavigation", "Found logged in user: ${currentUser.phone}, role: ${currentUser.role}")
-                    } else {
-                        android.util.Log.d("ElderCareNavigation", "No logged in user found")
-                    }
-                } else {
-                    android.util.Log.d("ElderCareNavigation", "Already logged in, role: $userRole")
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ElderCareNavigation", "Error checking login status", e)
-                // 如果检查失败，默认显示登录页面
-                isLoggedIn = false
-            }
-        } else {
-            android.util.Log.w("ElderCareNavigation", "UserService is null, showing login screen")
-            isLoggedIn = false
-        }
-    }
-    
-    // 根据登录状态和角色决定起始页面
-    val startDestination = when {
-        !isLoggedIn -> "login"
-        userRole == "parent" -> "home"
-        userRole == "child" -> "child_home"
-        else -> "login"
-    }
-    
+
+    var isLoggedIn by remember { mutableStateOf(false) }
+    var userRole by remember { mutableStateOf("") }
+
+    // startDestination 永远固定为 "splash"，NavHost 结构不变，避免 SlotTable 崩溃
     NavHost(
         navController = navController,
-        startDestination = startDestination,
+        startDestination = "splash",
         modifier = modifier
     ) {
+        // Splash：检查登录状态后跳转，不渲染任何 UI
+        composable("splash") {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            LaunchedEffect(Unit) {
+                var loggedIn = false
+                var role = ""
+                if (userService != null) {
+                    try {
+                        val savedLoggedIn = settingsManager.isLoggedIn()
+                        val savedRole = settingsManager.getUserRole()
+                        if (savedLoggedIn && savedRole.isNotBlank()) {
+                            loggedIn = true
+                            role = savedRole
+                            android.util.Log.d("ElderCareNavigation", "Already logged in, role: $role")
+                        } else {
+                            val currentUser = userService.getCurrentUser()
+                            if (currentUser != null) {
+                                loggedIn = true
+                                role = currentUser.role
+                                android.util.Log.d("ElderCareNavigation", "Found user: ${currentUser.phone}, role: $role")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("ElderCareNavigation", "Error checking login", e)
+                    }
+                }
+                isLoggedIn = loggedIn
+                userRole = role
+                val target = when {
+                    !loggedIn -> "login"
+                    role == "parent" -> "home"
+                    role == "child" -> "child_home"
+                    else -> "login"
+                }
+                navController.navigate(target) {
+                    popUpTo("splash") { inclusive = true }
+                }
+            }
+        }
+
         // 登录/注册页面
         composable("login") {
             if (userService != null) {
@@ -149,11 +154,7 @@ fun ElderCareNavigation(
                     userService = userService
                 )
             } else {
-                // 数据库未初始化时显示加载界面
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -164,13 +165,12 @@ fun ElderCareNavigation(
                 }
             }
         }
-        
+
         // 角色选择页面（已废弃，保留用于兼容）
         composable("role_selection") {
             RoleSelectionScreen(
                 onRoleSelected = {
                     userRole = settingsManager.getUserRole()
-                    // 根据选择的角色导航到对应首页
                     if (settingsManager.isParentRole()) {
                         navController.navigate("home") {
                             popUpTo("role_selection") { inclusive = true }
@@ -183,7 +183,7 @@ fun ElderCareNavigation(
                 }
             )
         }
-        
+
         // 父母端首页
         composable("home") {
             HomeScreen(
@@ -193,7 +193,7 @@ fun ElderCareNavigation(
                 onNavigateToSettings = { navController.navigate("settings") }
             )
         }
-        
+
         // 子女端首页
         composable("child_home") {
             ChildHomeScreen(
@@ -201,13 +201,11 @@ fun ElderCareNavigation(
                 onNavigateToSettings = { navController.navigate("settings") }
             )
         }
-        
+
         composable("menu_scan") {
-            MenuScanScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
+            MenuScanScreen(onNavigateBack = { navController.popBackStack() })
         }
-        
+
         composable("fridge") {
             FridgeScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -218,9 +216,7 @@ fun ElderCareNavigation(
         composable("fridge_history") {
             FridgeHistoryScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToDetail = { scanId ->
-                    navController.navigate("fridge_history/$scanId")
-                }
+                onNavigateToDetail = { scanId -> navController.navigate("fridge_history/$scanId") }
             )
         }
 
@@ -234,13 +230,11 @@ fun ElderCareNavigation(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
-        
+
         composable("voice_diary") {
-            VoiceDiaryScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
+            VoiceDiaryScreen(onNavigateBack = { navController.popBackStack() })
         }
-        
+
         composable("settings") {
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -255,11 +249,9 @@ fun ElderCareNavigation(
                 }
             )
         }
-        
+
         composable("family_guard") {
-            FamilyGuardScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
+            FamilyGuardScreen(onNavigateBack = { navController.popBackStack() })
         }
 
         composable(
@@ -269,7 +261,14 @@ fun ElderCareNavigation(
             val onboarding = (backStackEntry.arguments?.getInt("onboarding") ?: 0) == 1
             PersonalSituationScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onboarding = onboarding
+                onboarding = onboarding,
+                onNavigateToHome = if (onboarding) {
+                    {
+                        navController.navigate("home") {
+                            popUpTo("personal_situation?onboarding=1") { inclusive = true }
+                        }
+                    }
+                } else null
             )
         }
     }
