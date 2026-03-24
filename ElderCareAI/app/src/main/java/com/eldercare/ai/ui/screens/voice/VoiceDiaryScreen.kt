@@ -89,12 +89,17 @@ fun VoiceDiaryScreen(onNavigateBack: () -> Unit = {}) {
     // 后台初始化 Whisper
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
+            Log.d(TAG, "=== Whisper Init Start ===")
+            Log.d(TAG, "nativeLibLoaded=${whisperProcessor.isNativeLibraryLoaded()}, alreadyInit=${whisperProcessor.isInitialized()}")
             if (!whisperProcessor.isInitialized()) {
                 val ok = whisperProcessor.initFromAssets(context)
-                Log.d(TAG, "Whisper init: $ok, nativeLib=${whisperProcessor.isNativeLibraryLoaded()}")
+                Log.d(TAG, "initFromAssets result=$ok, nativeLib=${whisperProcessor.isNativeLibraryLoaded()}, initialized=${whisperProcessor.isInitialized()}")
+            } else {
+                Log.d(TAG, "Whisper already initialized, skipping")
             }
             withContext(Dispatchers.Main) {
                 whisperReady = whisperProcessor.isInitialized() && whisperProcessor.isNativeLibraryLoaded()
+                Log.d(TAG, "whisperReady=$whisperReady")
             }
         }
     }
@@ -135,81 +140,116 @@ fun VoiceDiaryScreen(onNavigateBack: () -> Unit = {}) {
 
     // ── Push-to-Talk（纯 Whisper 本地识别）──────────────────────────
 
-    fun startRecording() {
-        if (!hasAudioPermission()) {
-            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        if (isRecording || isProcessing || isReplying) return
-        errorMessage = null
-
-        scope.launch(Dispatchers.IO) {
-            audioRecorder.forceStop()
-            delay(30)
-            audioRecorder.onSilenceDetected = null
-            audioRecorder.onRmsChanged = { rms ->
-                scope.launch(Dispatchers.Main) { rmsLevel = rms.coerceIn(0f, 1f) }
-            }
-            val started = audioRecorder.startRecording()
-            withContext(Dispatchers.Main) {
-                if (started) {
-                    isRecording = true
-                    Log.d(TAG, "Recording started")
-                } else {
-                    errorMessage = "无法启动录音，请重试"
-                }
-            }
-        }
-    }
-
-    fun releaseRecording() {
+    // 将转写逻辑抽出，startRecording/releaseRecording/静音回调共用
+    fun doTranscribe() {
         if (!isRecording) return
         isRecording = false
         rmsLevel = 0f
         isProcessing = true
-        Log.d(TAG, "Recording stopped, starting transcription")
+        Log.d(TAG, "=== doTranscribe: stopping recorder, starting transcription ===")
 
         scope.launch(Dispatchers.IO) {
             try {
                 val audioData = audioRecorder.stopRecording()
-                if (audioData == null || audioData.size < 1600) { // 至少 0.1s
+                Log.d(TAG, "audioData=${audioData?.size ?: "null"} samples (${(audioData?.size ?: 0) / 16000f}s)")
+
+                if (audioData == null || audioData.size < 1600) {
+                    Log.w(TAG, "Audio too short or null: ${audioData?.size} samples")
                     withContext(Dispatchers.Main) {
                         errorMessage = "录音太短，请重试"
                         isProcessing = false
                     }
                     return@launch
                 }
-                Log.d(TAG, "Audio captured: ${audioData.size} samples (${audioData.size / 16000f}s)")
+
+                Log.d(TAG, "whisperReady=$whisperReady, nativeLib=${whisperProcessor.isNativeLibraryLoaded()}, initialized=${whisperProcessor.isInitialized()}")
 
                 val transcription = if (whisperReady) {
                     try {
-                        withTimeout(30_000) { whisperProcessor.transcribe(audioData) }
+                        val t0 = System.currentTimeMillis()
+                        val result = withTimeout(30_000) { whisperProcessor.transcribe(audioData) }
+                        val elapsed = System.currentTimeMillis() - t0
+                        Log.d(TAG, "Whisper transcribe done in ${elapsed}ms, result='$result'")
+                        result
                     } catch (e: Exception) {
                         Log.e(TAG, "Whisper transcribe failed", e)
                         null
                     }
                 } else {
-                    Log.w(TAG, "Whisper not ready, native=${whisperProcessor.isNativeLibraryLoaded()}, init=${whisperProcessor.isInitialized()}")
+                    Log.w(TAG, "Whisper not ready")
                     null
                 }
 
-                Log.d(TAG, "Transcription result: $transcription")
                 withContext(Dispatchers.Main) {
                     isProcessing = false
                     if (!transcription.isNullOrBlank()) {
+                        Log.d(TAG, "Transcription success: '$transcription'")
                         handleUserSpeech(transcription)
                     } else {
-                        errorMessage = if (!whisperReady) "语音识别初始化中，请稍后再试" else "未能识别到语音，请重试"
+                        val msg = when {
+                            !whisperProcessor.isNativeLibraryLoaded() -> "Native库未加载，请检查so文件"
+                            !whisperProcessor.isInitialized() -> "语音识别初始化中，请稍后再试"
+                            else -> "未能识别到语音，请重试"
+                        }
+                        Log.w(TAG, "Transcription empty/null: $msg")
+                        errorMessage = msg
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "releaseRecording error", e)
+                Log.e(TAG, "doTranscribe error", e)
                 withContext(Dispatchers.Main) {
                     errorMessage = "处理失败：${e.message}"
                     isProcessing = false
                 }
             }
         }
+    }
+
+    fun startRecording() {
+        if (!hasAudioPermission()) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        if (isRecording || isProcessing || isReplying) {
+            Log.w(TAG, "startRecording blocked: isRecording=$isRecording, isProcessing=$isProcessing, isReplying=$isReplying")
+            return
+        }
+        errorMessage = null
+        Log.d(TAG, "=== startRecording called, whisperReady=$whisperReady ===")
+
+        scope.launch(Dispatchers.IO) {
+            audioRecorder.forceStop()
+            delay(30)
+            // VAD 静音自动触发：停顿超过 1s 自动停止并识别
+            audioRecorder.silenceTimeoutMs = 1000L
+            audioRecorder.onSilenceDetected = {
+                Log.d(TAG, "VAD silence detected, auto-triggering transcription")
+                scope.launch(Dispatchers.Main) { doTranscribe() }
+            }
+            audioRecorder.onRmsChanged = { rms ->
+                scope.launch(Dispatchers.Main) { rmsLevel = rms.coerceIn(0f, 1f) }
+            }
+            val started = audioRecorder.startRecording()
+            Log.d(TAG, "AudioRecorder.startRecording() = $started")
+            withContext(Dispatchers.Main) {
+                if (started) {
+                    isRecording = true
+                    Log.d(TAG, "Recording started, isRecording=true")
+                } else {
+                    errorMessage = "无法启动录音，请重试"
+                    Log.e(TAG, "Failed to start recording")
+                }
+            }
+        }
+    }
+
+    fun releaseRecording() {
+        if (!isRecording) {
+            Log.w(TAG, "releaseRecording called but isRecording=false, ignoring")
+            return
+        }
+        // 用户松开按钮，直接触发转写（与VAD路径相同）
+        doTranscribe()
     }
 
     fun endCurrentSession() {

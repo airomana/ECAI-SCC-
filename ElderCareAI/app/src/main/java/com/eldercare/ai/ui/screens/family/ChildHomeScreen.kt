@@ -60,6 +60,10 @@ fun ChildHomeScreen(
     val shareContacts = isLinked && (personalSituation?.shareContacts ?: false)
     var showSuggestDialog by remember { mutableStateOf(false) }
     var showSubmittedDialog by remember { mutableStateOf(false) }
+    var showBindDialog by remember { mutableStateOf(false) }
+    var bindInviteCode by remember { mutableStateOf("") }
+    var bindError by remember { mutableStateOf<String?>(null) }
+    var isBinding by remember { mutableStateOf(false) }
     
     // 周报相关状态
     var showWeeklyReportDialog by remember { mutableStateOf(false) }
@@ -94,114 +98,118 @@ fun ChildHomeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (!isLinked) {
+                // 未绑定：只显示绑定卡片
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text("尚未绑定父母", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = if (pendingLinkRequests.isNotEmpty()) "绑定申请已提交，等待父母确认" else "请在设置中输入父母邀请码发起绑定申请",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = onNavigateToSettings,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("去设置")
-                        }
-                    }
-                }
-                return@Column
-            }
-
-            ChildHealthProfileCard(
-                healthProfile = if (shareHealth) healthProfile else null,
-                shareHealth = shareHealth,
-                onEditClick = {
-                    if (shareHealth) showSuggestDialog = true
-                }
-            )
-
-            if (shareContacts) {
-                ChildEmergencyContactsCard(contacts = contacts)
-            }
-
-            if (pendingRequests.isNotEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text("修改建议已提交", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "等待父母确认后生效",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            
-            // 本周统计卡片
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "本周陪伴统计",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Button(
-                            onClick = {
-                                showWeeklyReportDialog = true
-                                if (generatedReport == null) {
-                                    isGeneratingReport = true
-                                    scope.launch {
-                                        val report = llmService.generateWeeklyReport(weeklyEntries, healthProfile)
-                                        generatedReport = report ?: "周报生成失败或模型未配置，请稍后再试或配置模型。"
-                                        isGeneratingReport = false
+                        if (pendingLinkRequests.isNotEmpty()) {
+                            Text(
+                                text = "绑定申请已提交，等待父母确认",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "输入父母的邀请码发起绑定申请",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = bindInviteCode,
+                                onValueChange = {
+                                    bindInviteCode = it.trim().uppercase().take(24)
+                                    bindError = null
+                                },
+                                label = { Text("邀请码") },
+                                placeholder = { Text("请输入父母的邀请码") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                isError = bindError != null,
+                                supportingText = bindError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } }
+                            )
+                            Button(
+                                onClick = {
+                                    if (bindInviteCode.isBlank()) {
+                                        bindError = "请输入邀请码"
+                                        return@Button
                                     }
+                                    isBinding = true
+                                    scope.launch {
+                                        val userService = com.eldercare.ai.auth.UserService(
+                                            db.userDao(),
+                                            db.familyRelationDao(),
+                                            db.familyLinkRequestDao(),
+                                            settingsManager
+                                        )
+                                        val result = userService.linkFamilyByInviteCode(currentUserId, bindInviteCode)
+                                        isBinding = false
+                                        when (result) {
+                                            is com.eldercare.ai.auth.LinkResult.Pending -> {
+                                                bindInviteCode = ""
+                                                bindError = null
+                                            }
+                                            is com.eldercare.ai.auth.LinkResult.Error -> {
+                                                bindError = result.message
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isBinding
+                            ) {
+                                if (isBinding) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Text("提交绑定申请")
                                 }
-                            },
-                            enabled = weeklyEntries.isNotEmpty()
-                        ) {
-                            Text("生成智能周报")
+                            }
                         }
                     }
-                    Text("记录天数：${weeklyEntries.distinctBy { 
-                        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it.date))
-                    }.size}/7")
-                    Text("主要情绪：$mostCommonEmotion")
-                    Text("总记录数：${weeklyEntries.size}条")
                 }
-            }
-            
-            // 异常警报卡片
-            if (alerts.isNotEmpty()) {
+            } else {
+                // 已绑定：显示完整内容
+                ChildHealthProfileCard(
+                    healthProfile = if (shareHealth) healthProfile else null,
+                    shareHealth = shareHealth,
+                    onEditClick = {
+                        if (shareHealth) showSuggestDialog = true
+                    }
+                )
+
+                if (shareContacts) {
+                    ChildEmergencyContactsCard(contacts = contacts)
+                }
+
+                if (pendingRequests.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("修改建议已提交", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "等待父母确认后生效",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // 本周统计卡片
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
                     )
                 ) {
                     Column(
@@ -209,66 +217,113 @@ fun ChildHomeScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
                             Text(
-                                text = "异常提醒",
+                                text = "本周陪伴统计",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
+                                fontWeight = FontWeight.Bold
                             )
+                            Button(
+                                onClick = {
+                                    showWeeklyReportDialog = true
+                                    if (generatedReport == null) {
+                                        isGeneratingReport = true
+                                        scope.launch {
+                                            val report = llmService.generateWeeklyReport(weeklyEntries, healthProfile)
+                                            generatedReport = report ?: "周报生成失败或模型未配置，请稍后再试或配置模型。"
+                                            isGeneratingReport = false
+                                        }
+                                    }
+                                },
+                                enabled = weeklyEntries.isNotEmpty()
+                            ) {
+                                Text("生成智能周报")
+                            }
                         }
-                        
-                        alerts.take(3).forEach { alert ->
-                            Text("⚠️ $alert")
+                        Text("记录天数：${weeklyEntries.distinctBy {
+                            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(it.date))
+                        }.size}/7")
+                        Text("主要情绪：$mostCommonEmotion")
+                        Text("总记录数：${weeklyEntries.size}条")
+                    }
+                }
+
+                // 异常警报卡片
+                if (alerts.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "异常提醒",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            alerts.take(3).forEach { alert ->
+                                Text("⚠️ $alert")
+                            }
                         }
                     }
                 }
-            }
-            
-            // 查看详细记录按钮
-            Button(
-                onClick = onNavigateToFamilyGuard,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(Icons.Default.List, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("查看详细记录")
-            }
-            
-            // 最近3条记录
-            Text(
-                text = "最近陪伴记录",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            
-            if (weeklyEntries.isEmpty()) {
-                Card(
+
+                // 查看详细记录按钮
+                Button(
+                    onClick = onNavigateToFamilyGuard,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Text(
-                        text = "暂无记录",
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
-                    )
+                    Icon(Icons.Default.List, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("查看详细记录")
                 }
-            } else {
-                weeklyEntries.take(3).forEach { entry ->
-                    ChildDiaryEntryCard(entry = entry)
+
+                // 最近3条记录
+                Text(
+                    text = "最近陪伴记录",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                if (weeklyEntries.isEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Text(
+                            text = "暂无记录",
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    weeklyEntries.take(3).forEach { entry ->
+                        ChildDiaryEntryCard(entry = entry)
+                    }
                 }
             }
         }
