@@ -1,0 +1,611 @@
+package com.eldercare.ai.llm
+
+import android.content.Context
+import android.util.Log
+import com.eldercare.ai.data.SettingsManager
+import com.eldercare.ai.llm.dashscope.*
+import com.eldercare.ai.data.entity.ConversationMessageEntity
+import com.eldercare.ai.data.entity.HealthProfile
+import com.eldercare.ai.network.ApiClient
+import com.eldercare.ai.network.BackendApi
+import com.eldercare.ai.rag.RagRecord
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.TimeUnit
+
+/**
+ * LLM服务封装
+ * 优先走后端代理（API Key 存服务端），降级时直连 DashScope
+ */
+class LlmService private constructor(private val context: Context) {
+
+    private val config = LlmConfig
+    private val gson = Gson()
+
+    // 后端代理 API
+    private val backendApi: BackendApi by lazy { ApiClient.create(context, BackendApi::class.java) }
+
+    // 直连 DashScope（降级用）
+    private val api: DashScopeApi by lazy {
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+            redactHeader("Authorization")
+        }
+        val utf8Interceptor = okhttp3.Interceptor { chain ->
+            val response = chain.proceed(chain.request())
+            val contentType = response.header("Content-Type") ?: "application/json"
+            if (!contentType.contains("charset", ignoreCase = true)) {
+                response.newBuilder().header("Content-Type", "$contentType; charset=utf-8").build()
+            } else response
+        }
+        val client = OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .addInterceptor(utf8Interceptor)
+            .connectTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .readTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .writeTimeout(config.TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+        Retrofit.Builder()
+            .baseUrl("https://dashscope.aliyuncs.com/api/v1/services/aigc/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create(com.google.gson.GsonBuilder().setLenient().create()))
+            .build()
+            .create(DashScopeApi::class.java)
+    }
+
+    /** 判断是否应该走后端代理（已登录服务器） */
+    private fun useBackend(): Boolean =
+        SettingsManager.getInstance(context).isServerLinked()
+
+    companion object {
+        private const val TAG = "LlmService"
+
+        @Volatile
+        private var INSTANCE: LlmService? = null
+
+        fun getInstance(context: Context): LlmService {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: LlmService(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+
+    /**
+     * 为菜品生成大白话描述
+     */
+    suspend fun generatePlainDescription(
+        dishName: String,
+        healthProfile: HealthProfile? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
+            val prompt = buildPrompt(dishName, healthProfile)
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "system",
+                            content = "你是一个专业的健康饮食助手，擅长用简单易懂的大白话向老年人解释菜品。请用通俗易懂的语言，避免使用专业术语。"
+                        ),
+                        DashScopeMessage(role = "user", content = prompt)
+                    )
+                ),
+                parameters = DashScopeParameters(temperature = 0.7, max_tokens = 500, top_p = 0.8)
+            )
+
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val description = response.body()?.output?.choices?.firstOrNull()?.message?.content
+                if (description != null) {
+                    Log.d(TAG, "成功生成大白话描述: $description")
+                    return@withContext (description as String).trim()
+                }
+                Log.w(TAG, "响应体为空或格式不正确")
+                return@withContext null
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "API调用失败: ${response.code()}, $errorBody")
+                when (response.code()) {
+                    401, 403 -> Log.w(TAG, "API密钥无效或已过期")
+                    402, 429 -> Log.w(TAG, "API余额不足或请求频率超限")
+                    else -> Log.w(TAG, "API调用失败，将使用本地描述")
+                }
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "生成大白话描述时出错", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * 生成多轮对话回复（带历史上下文）
+     * 优先走后端代理，降级直连 DashScope
+     */
+    suspend fun generateConversationReply(
+        userMessage: String,
+        emotion: String,
+        history: List<ConversationMessageEntity>,
+        userName: String? = null,
+        healthProfile: HealthProfile? = null,
+        personalSituation: com.eldercare.ai.data.entity.PersonalSituationEntity? = null
+    ): String? = withContext(Dispatchers.IO) {
+        val name = userName?.takeIf { it.isNotBlank() } ?: "您"
+
+        // 构建个性化健康背景
+        val healthContext = buildString {
+            if (healthProfile != null) {
+                if (healthProfile.diseases.isNotEmpty())
+                    append("老人患有${healthProfile.diseases.joinToString("、")}。")
+                if (healthProfile.allergies.isNotEmpty())
+                    append("对${healthProfile.allergies.joinToString("、")}过敏。")
+                if (healthProfile.dietRestrictions.isNotEmpty())
+                    append("饮食禁忌：${healthProfile.dietRestrictions.joinToString("、")}。")
+            }
+            if (personalSituation != null) {
+                if (personalSituation.livingAlone) append("老人独居，需要更多关怀。")
+                if (personalSituation.city.isNotBlank()) append("居住在${personalSituation.city}。")
+                if (personalSituation.symptoms.isNotEmpty())
+                    append("近期症状：${personalSituation.symptoms.joinToString("、")}。")
+            }
+        }
+
+        val systemPrompt = buildString {
+            append("你是${name}的贴心陪伴助手，叫小助手，像老朋友一样陪伴老人聊天。")
+            append("说话风格：口语化、亲切自然，像邻居聊天，不要说教，不要生硬。")
+            append("回复长度：50字以内，适合语音播报，不用分点列举。")
+            if (healthContext.isNotBlank()) {
+                append("关于${name}的情况：$healthContext")
+                append("如果聊到饮食、健康话题，结合以上情况给出贴心提醒，但不要每次都主动提。")
+            }
+            append("规则：老人问具体问题时先给实质答案再关怀；不要只说情感回应而忽略问题本身。")
+            append("情绪感知：当前老人情绪是${emotion}，据此调整语气。")
+        }
+
+        val messages = mutableListOf<Map<String, String>>()
+        messages.add(mapOf("role" to "system", "content" to systemPrompt))
+        history.takeLast(6).forEach { msg ->
+            messages.add(mapOf("role" to msg.role, "content" to msg.content))
+        }
+        messages.add(mapOf("role" to "user", "content" to userMessage))
+
+        val requestBody = mapOf(
+            "model" to config.MODEL,
+            "input" to mapOf("messages" to messages),
+            "parameters" to mapOf("temperature" to 0.9, "max_tokens" to 150, "top_p" to 0.95, "result_format" to "message")
+        )
+
+        // 优先走后端代理
+        if (useBackend()) {
+            try {
+                val resp = backendApi.llmText(requestBody)
+                if (resp.isSuccessful) {
+                    val json = resp.body() ?: return@withContext null
+                    return@withContext extractTextFromDashScopeJson(json)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Backend LLM failed, falling back to direct: ${e.message}")
+            }
+        }
+
+        // 降级：直连 DashScope
+        if (!config.isConfigured() || !config.isEnabled(context)) return@withContext null
+        try {
+            val dashMessages = messages.map { DashScopeMessage(it["role"]!!, it["content"]!!) }
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(dashMessages),
+                parameters = DashScopeParameters(temperature = 0.9, max_tokens = 150, top_p = 0.95)
+            )
+            val response = api.generateText("Bearer ${config.API_KEY}", request = request)
+            if (response.isSuccessful) {
+                return@withContext response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct LLM also failed", e)
+        }
+        null
+    }
+
+    /**
+     * 结合健康档案 + RAG 知识库，为某道菜生成偏保守的健康建议
+     */
+    suspend fun generateDishAdviceWithRag(
+        dishName: String,
+        healthProfile: HealthProfile?,
+        ragRecords: List<RagRecord>
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
+            val prompt = buildPrompt(dishName, healthProfile, ragRecords)
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "system",
+                            content = """
+                                你是一个非常保守的老年人健康饮食医生助理。
+                                你的首要目标是保护老人的安全，宁可多提醒"不要吃"或"少吃"，也不要随便说"没关系"。
+                                规则：
+                                1. 如果下面权威知识或疾病信息里提示"应避免""不推荐"，你必须严格遵守，不得放宽。
+                                2. 如果你自己的知识和下面权威知识冲突，一律以权威知识和疾病限制为准。
+                                3. 如果不确定安全性，也要偏保守，建议少吃或换成更清淡的菜。
+                                4. 输出必须用简体中文、口语化、适合朗读，让老年人听得懂。
+                                5. 输出长度控制在 40～80 字之间。
+                            """.trimIndent()
+                        ),
+                        DashScopeMessage(role = "user", content = prompt)
+                    )
+                ),
+                parameters = DashScopeParameters(temperature = 0.3, max_tokens = 400, top_p = 0.7)
+            )
+
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val content = response.body()?.output?.choices?.firstOrNull()?.message?.content
+                if (content != null) {
+                    val text = (content as String).trim()
+                    Log.d(TAG, "RAG建议生成成功: $text")
+                    return@withContext text
+                }
+                Log.w(TAG, "RAG建议响应体为空或格式不正确")
+                return@withContext null
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "RAG建议 API 调用失败: ${response.code()}, $errorBody")
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "生成 RAG 建议时出错", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * 为语音日记生成温暖的AI回应
+     */
+    suspend fun generateDiaryResponse(
+        diaryContent: String,
+        emotion: String,
+        userName: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
+            val prompt = buildDiaryResponsePrompt(diaryContent, emotion, userName)
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(
+                        DashScopeMessage(
+                            role = "system",
+                            content = "你是一个温暖贴心的陪伴助手，专门为老年人服务。你的回应要：\n" +
+                                "1. 语言亲切自然，像家人一样温暖\n" +
+                                "2. 用简单易懂的大白话，避免专业术语\n" +
+                                "3. 根据老人的情绪给予适当的关怀和鼓励\n" +
+                                "4. 像聊天一样回应老人的话\n" +
+                                "5. 控制在30-50字以内，适合语音播报\n" +
+                                "6. 语气要温和、关心，让老人感受到陪伴"
+                        ),
+                        DashScopeMessage(role = "user", content = prompt)
+                    )
+                ),
+                parameters = DashScopeParameters(temperature = 0.8, max_tokens = 200, top_p = 0.9)
+            )
+
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val responseText = response.body()?.output?.choices?.firstOrNull()?.message?.content
+                if (responseText != null) {
+                    Log.d(TAG, "成功生成AI回应: $responseText")
+                    return@withContext (responseText as String).trim()
+                }
+                Log.w(TAG, "响应体为空或格式不正确")
+                return@withContext null
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "API调用失败: ${response.code()}, $errorBody")
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "生成AI回应时出错", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * 生成子女端的周报
+     */
+    suspend fun generateWeeklyReport(
+        entries: List<com.eldercare.ai.data.entity.DiaryEntryEntity>,
+        healthProfile: HealthProfile? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured() || !config.isEnabled(context)) return@withContext null
+
+            val entriesText = entries.joinToString("\n") { "情绪: ${it.emotion}, 内容: ${it.content}" }
+            val prompt = buildString {
+                append("这是老人过去一周的陪伴聊天记录：\n$entriesText\n\n")
+                if (healthProfile != null) {
+                    append("老人的健康档案：姓名${healthProfile.name}，疾病${healthProfile.diseases.joinToString("、")}。\n\n")
+                }
+                append("请你作为陪伴助手，为老人的子女生成一份周报。要求：\n")
+                append("1. 总结老人这一周的主要情绪状态\n")
+                append("2. 提取老人提到的重要生活事件或需求\n")
+                append("3. 给出1-2条具体的关怀建议\n")
+                append("4. 语气专业、贴心，控制在150字以内")
+            }
+
+            val request = DashScopeRequest(
+                model = config.MODEL,
+                input = DashScopeInput(
+                    messages = listOf(DashScopeMessage(role = "user", content = prompt))
+                ),
+                parameters = DashScopeParameters(temperature = 0.5, max_tokens = 300)
+            )
+
+            val response = api.generateText(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+            if (response.isSuccessful) {
+                return@withContext response.body()?.output?.choices?.firstOrNull()?.message?.content?.toString()?.trim()
+            }
+            return@withContext null
+        } catch (e: Exception) {
+            Log.e(TAG, "生成周报出错", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * 识别图片中的食材（使用通义千问视觉模型）
+     */
+    suspend fun analyzeImage(imageBase64: String, visionModel: String = "qwen-vl-max"): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!config.isConfigured()) {
+                Log.w(TAG, "LLM配置不完整，无法调用API")
+                return@withContext null
+            }
+            if (!config.isEnabled(context)) {
+                Log.d(TAG, "LLM功能未启用")
+                return@withContext null
+            }
+
+            val request = DashScopeMultimodalRequest(
+                model = visionModel,
+                input = DashScopeMultimodalInput(
+                    messages = listOf(
+                        DashScopeMultimodalMessage(
+                            role = "user",
+                            content = listOf(
+                                mapOf("image" to "data:image/jpeg;base64,$imageBase64"),
+                                mapOf(
+                                    "text" to buildString {
+                                        append("你在帮一位老人整理冰箱食材。请看图识别食材，并根据外观给出大致新鲜程度。")
+                                        append("\n同一种食材只输出一次；如果看到多个请合并，并用 count 表示数量估计（不确定就填 1）。")
+                                        append("\n必须严格只输出JSON数组（不要Markdown、不要多余文字）。格式如下：")
+                                        append(
+                                            "\n[\n" +
+                                                "  {\n" +
+                                                "    \"name\": \"食材名\",\n" +
+                                                "    \"category\": \"蔬菜|水果|肉类|海鲜|蛋奶|豆制品|熟食|主食|其他\",\n" +
+                                                "    \"count\": 1,\n" +
+                                                "    \"clarity\": \"清楚|一般|看不清\",\n" +
+                                                "    \"confidence\": 0.0,\n" +
+                                                "    \"freshness\": \"新鲜|一般|快坏|疑似变质|未知\",\n" +
+                                                "    \"spoil_signs_observed\": [\"发霉\"],\n" +
+                                                "    \"notes\": \"可选：你判断依据（20字以内）\"\n" +
+                                                "  }\n" +
+                                                "]\n"
+                                        )
+                                        append("\n规则：")
+                                        append("\n1) spoil_signs_observed 只能从以下词里选（可为空数组）：发霉|渗液|腐烂|黑斑|变色|发黏|出水|虫|破损|皱缩|软烂")
+                                        append("\n2) 如果看不清：clarity=看不清，confidence<=0.3，freshness=未知，spoil_signs_observed=[]")
+                                        append("\n3) 只有在 spoil_signs_observed 包含 发霉/渗液/腐烂/黑斑/软烂/发黏 时，才允许 freshness=疑似变质；否则不要随便判疑似变质")
+                                        append("\n4) 如果只是轻微皱缩/出水/变色但不严重：freshness=快坏 或 一般，并写 notes 说明依据")
+                                        append("\n5) 安全优先：不确定就判 freshness=未知")
+                                    }
+                                )
+                            )
+                        )
+                    )
+                ),
+                parameters = DashScopeParameters(temperature = 0.0, max_tokens = 1000, top_p = 0.1)
+            )
+
+            val response = api.generateMultimodal(
+                authorization = "Bearer ${config.API_KEY}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val body = response.body()
+                var content = body?.output?.choices?.firstOrNull()?.message?.content
+
+                if (content == null || (content is String && content.isBlank())) {
+                    content = body?.output?.text
+                } else if (content is List<*>) {
+                    val textItem = (content as List<*>).find { it is Map<*, *> && (it as Map<*, *>)["text"] != null } as? Map<*, *>
+                    if (textItem != null) content = textItem["text"] as? String
+                }
+
+                if (content != null && content is String) {
+                    Log.d(TAG, "成功识别图片: $content")
+                    val jsonStart = content.indexOf("[")
+                    val jsonEnd = content.lastIndexOf("]")
+                    if (jsonStart != -1 && jsonEnd != -1) {
+                        return@withContext content.substring(jsonStart, jsonEnd + 1)
+                    }
+                    return@withContext content
+                } else {
+                    Log.w(TAG, "响应体为空或格式不正确: ${body?.output}")
+                    return@withContext null
+                }
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "API调用失败: ${response.code()}, $errorBody")
+                when (response.code()) {
+                    401, 403 -> throw LlmAuthException("大模型API Key无效或已过期")
+                    402, 429 -> throw LlmRateLimitException("大模型额度不足或请求频率过高")
+                }
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "识别图片时出错", e)
+            return@withContext null
+        }
+    }
+
+    // ---- 私有辅助函数 ----
+
+    private fun buildPrompt(
+        dishName: String,
+        healthProfile: HealthProfile?,
+        ragRecords: List<RagRecord>
+    ): String {
+        val name = healthProfile?.name?.takeIf { it.isNotBlank() } ?: "这位老人"
+        return buildString {
+            append("请根据下面信息，判断【$name】能不能吃这道菜，并给出偏保守的大白话建议。\n\n")
+            append("【菜品】\n- 名称：$dishName\n\n")
+            append("【老人健康档案】\n")
+            if (healthProfile == null) {
+                append("- 未提供健康档案，请默认按高风险人群保守处理。\n\n")
+            } else {
+                append("- 年龄：${healthProfile.age.takeIf { it > 0 } ?: 65} 岁（老年人）\n")
+                if (healthProfile.diseases.isNotEmpty()) append("- 慢性病：${healthProfile.diseases.joinToString("、")}\n")
+                else append("- 慢性病：未填写，按可能存在常见三高等问题保守处理。\n")
+                if (healthProfile.allergies.isNotEmpty()) append("- 过敏：${healthProfile.allergies.joinToString("、")}\n")
+                if (healthProfile.dietRestrictions.isNotEmpty()) append("- 医嘱/忌口：${healthProfile.dietRestrictions.joinToString("、")}\n")
+                append("\n")
+            }
+            append("【权威饮食知识（RAG，优先遵守）】\n")
+            if (ragRecords.isEmpty()) {
+                append("- 未检索到针对本菜的权威条目，请结合老年人常见疾病，偏保守给出建议。\n\n")
+            } else {
+                ragRecords.forEachIndexed { index, record ->
+                    append("${index + 1}. 疾病：${record.disease}；关键词：${record.keyword}；")
+                    append("风险等级：${record.riskLevel}；简要建议：${record.advice}；来源：${record.source}\n")
+                }
+                append("\n")
+            }
+            append("【输出要求】\n")
+            append("1. 只输出一小段大白话，用第二人称'您'，直接对老人说话。\n")
+            append("2. 必须体现风险等级和是否推荐（例如：不推荐/尽量少吃/可以适量吃）。\n")
+            append("3. 如果权威知识或疾病信息提示高风险，明确说'最好不要吃'，并给一个简单替代建议。\n")
+            append("4. 不要输出列表、JSON 或分点，只要一个自然段即可。\n")
+            append("5. 如果没有把握，也要说明'为了保险起见，建议少吃或不吃'。\n")
+        }
+    }
+
+    private fun buildDiaryResponsePrompt(diaryContent: String, emotion: String, userName: String?): String {
+        val name = userName?.takeIf { it.isNotBlank() } ?: "您"
+        return buildString {
+            append("一位老人刚才对我说：\"$diaryContent\"")
+            append("\n\n我识别到老人的情绪是：$emotion")
+            append("\n\n请用温暖亲切的语气回应老人，就像家人一样关心他。")
+            append("\n\n要求：")
+            append("\n1. 称呼老人为\"$name\"（如果提供了名字）或\"您\"（如果没有名字）")
+            append("\n2. 对老人的分享表示理解和关心")
+            append("\n3. 根据情绪给予适当的回应：")
+            when (emotion) {
+                "满意", "开心" -> append("\n   - 表达高兴，陪老人一起开心")
+                "担心" -> append("\n   - 给予安慰，缓解焦虑")
+                "孤单" -> append("\n   - 表达理解和陪伴，建议多联系家人或找点乐子")
+                else -> append("\n   - 像闲聊一样自然回应，可以顺着话题往下聊")
+            }
+            append("\n4. 语言要自然、口语化，适合语音播报")
+            append("\n5. 控制在30-50字以内")
+            append("\n\n请直接给出回应，不要加引号或其他格式。")
+        }
+    }
+
+    private fun buildPrompt(dishName: String, healthProfile: HealthProfile?): String {
+        return buildString {
+            append("请用简单易懂的大白话描述这道菜：$dishName。")
+            append("\n\n要求：")
+            append("\n1. 用老人能理解的语言，避免专业术语")
+            append("\n2. 说明主要食材和做法")
+            append("\n3. 说明特点（如很香但是油大、清淡健康等）")
+            append("\n4. 如果有健康提醒，用简单的话说明")
+            append("\n5. 控制在50字以内，语言亲切自然")
+            if (healthProfile != null) {
+                val diseases = healthProfile.diseases.takeIf { it.isNotEmpty() }
+                val allergies = healthProfile.allergies.takeIf { it.isNotEmpty() }
+                val restrictions = healthProfile.dietRestrictions.takeIf { it.isNotEmpty() }
+                if (diseases != null || allergies != null || restrictions != null) {
+                    append("\n\n用户信息：")
+                    diseases?.let { append("\n- 疾病：${it.joinToString("、")}") }
+                    allergies?.let { append("\n- 过敏：${it.joinToString("、")}") }
+                    restrictions?.let { append("\n- 忌口/医嘱：${it.joinToString("、")}") }
+                    append("\n请根据用户情况，给出个性化的健康建议。")
+                }
+            }
+            append("\n\n请直接给出描述，不要加引号或其他格式。")
+        }
+    }
+
+    /**
+     * 从 DashScope 返回的原始 JSON 字符串中提取文本内容
+     */
+    private fun extractTextFromDashScopeJson(json: String): String? {
+        return try {
+            val map = gson.fromJson<Map<String, Any>>(json, object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type)
+            val output = map["output"] as? Map<*, *> ?: return null
+            val choices = output["choices"] as? List<*>
+            if (choices != null) {
+                val first = choices.firstOrNull() as? Map<*, *> ?: return null
+                val message = first["message"] as? Map<*, *> ?: return null
+                (message["content"] as? String)?.trim()
+            } else {
+                (output["text"] as? String)?.trim()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "extractTextFromDashScopeJson error", e)
+            null
+        }
+    }
+}

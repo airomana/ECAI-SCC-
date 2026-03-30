@@ -1,0 +1,99 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.TemporaryItems/
+.Spotlight-V100/
+.Trashes/
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.log
+
+# IDE
+.vscode/
+*.code-workspace
+**/.idea/
+**/*.iml
+**/*.iws
+**/*.ipr
+.navigation/
+captures/
+
+# Android / Gradle
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+**/build/
+**/.gradle/
+**/.kotlin/
+**/out/
+**/bin/
+**/gen/
+**/reports/
+local.properties
+**/local.properties
+
+# NDK / CMake
+.externalNativeBuild/
+**/.externalNativeBuild/
+.cxx/
+**/.cxx/
+**/CMakeCache.txt
+**/CMakeFiles/
+**/cmake_install.cmake
+**/compile_commands.json
+**/*.ninja_deps
+**/*.ninja_log
+**/build.ninja
+**/rules.ninja
+**/*.o
+**/*.obj
+**/*.so
+**/*.dll
+**/*.exe
+**/*.pdb
+**/*.a
+**/*.lib
+
+# Profiling
+*.hprof
+
+# Secrets
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+keystore.properties
+signing.properties
+
+# Misc (Eclipse)
+.classpath
+.project
+.settings/
+
+# Backend (Maven/Spring Boot)
+**/target/
+**/pom.xml.tag
+**/pom.xml.releaseBackup
+**/pom.xml.versionsBackup
+**/pom.xml.next
+**/release.properties
+**/dependency-reduced-pom.xml
+**/buildNumber.properties
+**/.mvn/timing.properties
+**/.mvn/wrapper/maven-wrapper.jar
+
+# Model files (if any large models downloaded locally)
+**/*.pdmodel
+**/*.pdiparams
+**/*.bin
+**/*.param
+
+ElderCareAI/app/build/

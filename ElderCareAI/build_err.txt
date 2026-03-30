@@ -1,0 +1,105 @@
+﻿Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:dataBindingMergeDependencyArtifactsDebug UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:dataBindingGenBaseClassesDebug UP-TO-DATE
+> Task :app:dataBindingTriggerDebug UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:compressDebugAssets
+
+> Task :app:configureCMakeDebug[arm64-v8a]
+[CXX5304] This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+[CXX5304] This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+[CXX5304] package.xml parsing problem. 意外的元素 (uri:"", local:"abis")。所需元素为<{}vendor>,<{}codename>,<{}base-extension>,<{}abi>,<{}api-level>,<{}extension-level>,<{}tag>
+[CXX5304] package.xml parsing problem. 意外的元素 (uri:"", local:"abis")。所需元素为<{}vendor>,<{}codename>,<{}base-extension>,<{}abi>,<{}api-level>,<{}extension-level>,<{}tag>
+[CXX5304] package.xml parsing problem. 意外的元素 (uri:"", local:"translatedAbis")。所需元素为<{}vendor>,<{}codename>,<{}base-extension>,<{}abi>,<{}api-level>,<{}extension-level>,<{}tag>
+[CXX5304] package.xml parsing problem. 意外的元素 (uri:"", local:"translatedAbis")。所需元素为<{}vendor>,<{}codename>,<{}base-extension>,<{}abi>,<{}api-level>,<{}extension-level>,<{}tag>
+
+> Task :app:buildCMakeDebug[arm64-v8a]
+> Task :app:configureCMakeDebug[armeabi-v7a]
+> Task :app:buildCMakeDebug[armeabi-v7a]
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/auth/UserService.kt:66:21 Variable 'resp' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/auth/UserService.kt:196:9 Parameter 'serverId' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/auth/UserService.kt:218:68 Parameter 'inviteCode' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/companion/ConversationManager.kt:321:36 Parameter 'content' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:97:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:141:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:182:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:243:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:309:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/data/ElderCareDatabase.kt:338:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/fridge/FoodDetector.kt:281:21 Variable 'i' initializer is redundant
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:262:35 There is more than one label with such a name in this scope
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:277:35 There is more than one label with such a name in this scope
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:292:35 There is more than one label with such a name in this scope
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:307:35 There is more than one label with such a name in this scope
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:321:35 There is more than one label with such a name in this scope
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/health/HealthRiskEvaluator.kt:372:9 Parameter 'dishName' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/llm/LlmService.kt:472:45 No cast needed
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/llm/LlmService.kt:472:87 No cast needed
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/tts/TtsService.kt:56:26 This declaration overrides deprecated member but not marked as deprecated itself. Please add @Deprecated annotation or suppress. See https://youtrack.jetbrains.com/issue/KT-47902 for details
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/components/ElderCareComponents.kt:79:61 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/components/ElderCareComponents.kt:219:36 'outlinedTextFieldColors(Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., TextSelectionColors = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ..., Color = ...): TextFieldColors' is deprecated. Renamed to `OutlinedTextFieldDefaults.colors` with additional parameters tocontrol container color based on state.
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/auth/LoginScreen.kt:40:9 Variable 'settingsManager' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/auth/LoginScreen.kt:397:90 'Login: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Login
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/chat/ChatHistoryScreen.kt:32:9 Variable 'context' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/family/ChildHomeScreen.kt:63:9 Variable 'showBindDialog' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/family/ChildHomeScreen.kt:366:40 'List: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.List
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/family/ChildHomeScreen.kt:558:5 Parameter 'personalSituation' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/family/FamilyGuardScreen.kt:310:5 Parameter 'personalSituation' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/family/FamilyGuardScreen.kt:597:48 'Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Send
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/home/HomeScreen.kt:37:5 Parameter 'onNavigateToChatHistory' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:739:5 Parameter 'recognizedText' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:742:5 Parameter 'debugInfo' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:1018:25 'Divider(Modifier = ..., Dp = ..., Color = ...): Unit' is deprecated. Renamed to HorizontalDivider
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:1097:25 'Divider(Modifier = ..., Dp = ..., Color = ...): Unit' is deprecated. Renamed to HorizontalDivider
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:1383:49 Variable 'relativeX' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/menu/MenuScanScreen.kt:1384:49 Variable 'relativeY' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/settings/SettingsScreen.kt:62:9 Variable 'llmEnabled' is never used
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/settings/SettingsScreen.kt:149:46 'VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/ui/screens/voice/VoiceDiaryScreen.kt:275:36 'EventNote: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.EventNote
+w: file:///E:/swcontest/ECAI-SCC-/ElderCareAI/app/src/main/java/com/eldercare/ai/whisper/WhisperProcessor.kt:11:44 Parameter 'context' is never used
+
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+
+> Task :app:installDebug
+Installing APK 'app-debug.apk' on 'SDY-AN00 - 14' for :app:debug
+Installed on 1 device.
+
+BUILD SUCCESSFUL in 2m 34s
+44 actionable tasks: 12 executed, 32 up-to-date

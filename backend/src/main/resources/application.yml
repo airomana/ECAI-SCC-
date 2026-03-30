@@ -1,0 +1,44 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/eldercare?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    username: root
+    password: 20190915
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:   # 如有密码填写
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+
+# JWT 配置
+jwt:
+  secret: yourSecretKeyHere1234567890abcdefghijklmnopqrstuvwxyz
+  expiration: 604800  # 7天，单位秒
+
+# LLM 代理配置（API Key 只存服务端）
+llm:
+  dashscope:
+    api-key: sk-6b0835b8369c47c7a5e4b8fc8d2a6d79
+    base-url: https://dashscope.aliyuncs.com/api/v1/services/aigc/
+    timeout: 30
+
+# 验证码配置
+sms:
+  test-mode: true
+  expire-seconds: 300
