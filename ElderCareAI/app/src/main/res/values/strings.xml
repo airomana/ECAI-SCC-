@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">银发智膳助手</string>
+    
+    <!-- 主页面 -->
+    <string name="home_greeting">您好！今天想吃什么呢？\n让我来帮您看看菜单吧～</string>
+    <string name="scan_menu">拍菜单</string>
+    <string name="scan_menu_subtitle">看看今天有什么菜</string>
+    <string name="scan_fridge">拍冰箱</string>
+    <string name="scan_fridge_subtitle">看看哪些菜要过期了</string>
+    <string name="voice_diary">今天吃了啥</string>
+    <string name="voice_diary_subtitle">说说今天的饮食</string>
+    <string name="settings">设置</string>
+    <string name="help_text">有问题可以点击右上角设置</string>
+    
+    <!-- 菜单扫描 -->
+    <string name="scanning_menu">正在识别菜单...</string>
+    <string name="camera_instruction">对准菜单拍照</string>
+    <string name="camera_hint">请将菜单放在相机前，点击拍照按钮</string>
+    <string name="rescan">重新扫描</string>
+    
+    <!-- 冰箱管理 -->
+    <string name="fridge_items">冰箱里的食材</string>
+    <string name="scanning_fridge">正在识别...</string>
+    <string name="scan_fridge_instruction">看看有什么食材</string>
+    
+    <!-- 语音日记 -->
+    <string name="voice_prompt">说说今天吃了什么吧～</string>
+    <string name="start_recording">开始录音</string>
+    <string name="stop_recording">停止录音</string>
+    <string name="recording">正在录音...</string>
+    <string name="click_to_record">点击开始录音</string>
+    <string name="you_said">您说的是：</string>
+    <string name="save_record">保存记录</string>
+    <string name="recent_records">最近的饮食记录</string>
+    
+    <!-- 设置页面 -->
+    <string name="personal_info">个人信息</string>
+    <string name="health_profile">健康档案</string>
+    <string name="health_profile_subtitle">设置您的健康信息</string>
+    <string name="emergency_contact">紧急联系人</string>
+    <string name="emergency_contact_subtitle">设置家人联系方式</string>
+    <string name="usage_settings">使用设置</string>
+    <string name="voice_broadcast">语音播报</string>
+    <string name="voice_broadcast_subtitle">开启后会语音播报识别结果</string>
+    <string name="vibration_reminder">震动提醒</string>
+    <string name="vibration_reminder_subtitle">重要提醒时震动</string>
+    <string name="font_size">字体大小</string>
+    <string name="font_size_subtitle">调整文字显示大小</string>
+    <string name="about">关于</string>
+    <string name="help">使用帮助</string>
+    <string name="help_subtitle">查看使用说明</string>
+    <string name="contact_service">联系客服</string>
+    <string name="service_phone">400-123-4567</string>
+    <string name="version_info">版本信息</string>
+    <string name="version_name">银发智膳助手 v1.0</string>
+    
+    <!-- 对话框 -->
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="name">姓名</string>
+    <string name="age">年龄</string>
+    <string name="diseases">疾病（如：高血压、糖尿病）</string>
+    <string name="contact_name">联系人姓名</string>
+    <string name="phone_number">电话号码</string>
+    
+    <!-- 通用 -->
+    <string name="back">返回</string>
+    <string name="confirm">确认</string>
+    <string name="delete">删除</string>
+    <string name="refresh">刷新</string>
+    <string name="loading">加载中...</string>
+    <string name="error">出错了</string>
+    <string name="retry">重试</string>
+    
+    <!-- 权限相关 -->
+    <string name="permission_camera">需要相机权限来拍照识别菜单</string>
+    <string name="permission_microphone">需要麦克风权限来录制语音日记</string>
+    <string name="permission_storage">需要存储权限来保存照片和语音</string>
+    
+    <!-- 健康建议 -->
+    <string name="health_advice_high_risk">这个菜不太适合您，建议少吃或不吃</string>
+    <string name="health_advice_medium_risk">这个菜可以适量吃一点</string>
+    <string name="health_advice_low_risk">这个菜很适合您，可以放心吃</string>
+    
+    <!-- 食材状态 -->
+    <string name="fresh">新鲜</string>
+    <string name="expiring_soon">即将过期</string>
+    <string name="expired">已过期</string>
+    <string name="dont_eat_expired">别吃了，容易拉肚子</string>
+    <string name="eat_soon">赶紧吃掉</string>
+    <string name="still_fresh">还很新鲜</string>
+</resources>

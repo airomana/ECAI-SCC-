@@ -1,0 +1,99 @@
+// 这是使用真实whisper.cpp的示例代码
+// 需要先下载whisper.cpp源码并集成到CMakeLists.txt
+
+#include "whisper_processor.h"
+#include "whisper.h"  // whisper.cpp的头文件
+#include <android/log.h>
+#include <algorithm>
+
+#define TAG "WhisperProcessor"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+bool WhisperProcessor::init(const std::string& model_path) {
+    try {
+        LOGI("Initializing Whisper processor with model: %s", model_path.c_str());
+        
+        // 使用whisper.cpp加载模型
+        whisper_ctx_ = whisper_init_from_file(model_path.c_str());
+        if (whisper_ctx_ == nullptr) {
+            LOGE("Failed to load Whisper model from: %s", model_path.c_str());
+            return false;
+        }
+        
+        initialized_ = true;
+        LOGI("Whisper model loaded successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        LOGE("Failed to initialize Whisper processor: %s", e.what());
+        return false;
+    }
+}
+
+std::string WhisperProcessor::transcribe(const float* audio_data, int length) {
+    if (!initialized_ || whisper_ctx_ == nullptr) {
+        LOGE("Whisper processor not initialized");
+        return "";
+    }
+    
+    try {
+        // 创建whisper_full_params
+        struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+        params.print_progress = false;
+        params.print_special = false;
+        params.print_realtime = false;
+        params.translate = false;
+        params.language = "zh";  // 中文
+        params.n_threads = 4;     // 线程数
+        params.offset = 0;
+        params.no_context = true;
+        params.single_segment = false;
+        params.suppress_blank = true;
+        params.suppress_non_speech_tokens = false;
+        params.temperature = 0.0f;
+        params.max_len = 0;
+        params.token_timestamps = false;
+        params.speed_up = false;
+        params.audio_ctx = 0;
+        params.prompt_tokens = nullptr;
+        params.prompt_n_tokens = 0;
+        
+        // 执行识别
+        int ret = whisper_full((struct whisper_context*)whisper_ctx_, params, audio_data, length);
+        if (ret != 0) {
+            LOGE("Whisper transcription failed with code: %d", ret);
+            return "";
+        }
+        
+        // 获取识别结果
+        std::string result;
+        int n_segments = whisper_full_n_segments((struct whisper_context*)whisper_ctx_);
+        
+        for (int i = 0; i < n_segments; i++) {
+            const char* text = whisper_full_get_segment_text((struct whisper_context*)whisper_ctx_, i);
+            if (text != nullptr) {
+                if (!result.empty()) {
+                    result += " ";
+                }
+                result += text;
+            }
+        }
+        
+        LOGI("Whisper transcription completed: %s", result.c_str());
+        return result;
+        
+    } catch (const std::exception& e) {
+        LOGE("Whisper transcription error: %s", e.what());
+        return "";
+    }
+}
+
+void WhisperProcessor::release() {
+    if (whisper_ctx_ != nullptr) {
+        whisper_free((struct whisper_context*)whisper_ctx_);
+        whisper_ctx_ = nullptr;
+    }
+    initialized_ = false;
+    LOGI("Whisper processor resources released");
+}
